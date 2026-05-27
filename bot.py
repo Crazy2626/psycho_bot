@@ -4,7 +4,9 @@ import os
 import re
 import random
 import json
+import sqlite3
 from datetime import datetime, timedelta
+from contextlib import contextmanager
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command, StateFilter
@@ -14,7 +16,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
     ReplyKeyboardMarkup, KeyboardButton,
     InlineKeyboardMarkup, InlineKeyboardButton,
-    ReplyKeyboardRemove
+    ReplyKeyboardRemove, LabeledPrice, PreCheckoutQuery
 )
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
@@ -39,6 +41,8 @@ groq_client = AsyncOpenAI(
 ) if GROQ_API_KEY else None
 
 PSYCHOLOGIST_NAME = "Дарья"
+SUBSCRIPTION_PRICE = 99  # 99 Stars
+FREE_QUESTIONS_PER_DAY = 7
 
 logging.basicConfig(level=logging.INFO)
 
@@ -46,9 +50,55 @@ bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
+# ========== БАЗА ДАННЫХ SQLITE ==========
+DB_PATH = "bot_data.db"
+
+@contextmanager
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
+
+def init_db():
+    with get_db() as conn:
+        cursor = conn.cursor()
+        # Таблица пользователей: id, username, пол, дата регистрации, статус подписки, дата окончания
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                user_id INTEGER PRIMARY KEY,
+                username TEXT,
+                gender TEXT,
+                name TEXT,
+                registered_at TIMESTAMP,
+                is_premium BOOLEAN DEFAULT 0,
+                premium_until TIMESTAMP
+            )
+        ''')
+        # Таблица счётчиков сообщений
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS message_counts (
+                user_id INTEGER PRIMARY KEY,
+                count INTEGER DEFAULT 0,
+                last_reset_date TEXT
+            )
+        ''')
+        # Таблица для ежедневных прогнозов
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS daily_forecasts (
+                user_id INTEGER PRIMARY KEY,
+                last_forecast_date TEXT,
+                forecast_time TEXT
+            )
+        ''')
+
+init_db()
+
 # ========== FSM СОСТОЯНИЯ ==========
 class Dialogue(StatesGroup):
-    choosing_gender = State()  # НОВОЕ: выбор пола
+    choosing_gender = State()
     chatting = State()
     waiting_for_contact = State()
     waiting_for_birthdate = State()
@@ -56,30 +106,112 @@ class Dialogue(StatesGroup):
     waiting_for_birthdate_comp2 = State()
     waiting_for_zodiac = State()
 
-# ========== ХРАНИЛИЩЕ ДАННЫХ ПОЛЬЗОВАТЕЛЕЙ ==========
-user_data = {}  # {user_id: {"gender": "female"/"male", "name": str}}
-user_history = {}
-user_problems = {}
-
-# ========== ГЛАВНОЕ МЕНЮ ==========
+# ========== КЛАВИАТУРЫ ==========
 menu_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="ℹ️ Помощь"), KeyboardButton(text="🗑 Очистить диалог")],
         [KeyboardButton(text="🔮 Число судьбы"), KeyboardButton(text="⭐ Гороскоп")],
         [KeyboardButton(text="♊ Совместимость"), KeyboardButton(text="🎴 Карта дня Таро")],
-        [KeyboardButton(text="📞 Запись к психологу")]
+        [KeyboardButton(text="📞 Запись к психологу"), KeyboardButton(text="⭐ Подписка Premium")]
     ],
     resize_keyboard=True
 )
 
-# Клавиатура для выбора пола
 gender_keyboard = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="👩 Женский"), KeyboardButton(text="👨 Мужской")]
-    ],
+    keyboard=[[KeyboardButton(text="👩 Женский"), KeyboardButton(text="👨 Мужской")]],
     resize_keyboard=True,
     one_time_keyboard=True
 )
+
+# Клавиатура для подписки
+premium_keyboard = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text="💎 Оформить подписку 99 Stars/мес", callback_data="buy_subscription")],
+        [InlineKeyboardButton(text="🔍 Что даёт подписка?", callback_data="what_is_premium")]
+    ]
+)
+
+# ========== РАБОТА С БАЗОЙ ДАННЫХ ==========
+def get_user_gender(user_id: int) -> str:
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT gender FROM users WHERE user_id = ?", (user_id,))
+        row = cursor.fetchone()
+        return row[0] if row and row[0] else "female"
+
+def get_user_name(user_id: int) -> str:
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM users WHERE user_id = ?", (user_id,))
+        row = cursor.fetchone()
+        return row[0] if row else "друг"
+
+def set_user_gender(user_id: int, username: str, gender: str, name: str):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT OR REPLACE INTO users (user_id, username, gender, name, registered_at)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (user_id, username, gender, name, datetime.now()))
+
+def is_premium(user_id: int) -> bool:
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT is_premium, premium_until FROM users WHERE user_id = ?", (user_id,))
+        row = cursor.fetchone()
+        if row and row[0] and row[1]:
+            premium_until = datetime.fromisoformat(row[1])
+            if premium_until > datetime.now():
+                return True
+        return False
+
+def get_remaining_questions(user_id: int) -> int:
+    if is_premium(user_id):
+        return 999
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT count, last_reset_date FROM message_counts WHERE user_id = ?", (user_id,))
+        row = cursor.fetchone()
+        if row:
+            count, last_reset = row
+            if last_reset != today_str:
+                count = 0
+                cursor.execute("UPDATE message_counts SET count = ?, last_reset_date = ? WHERE user_id = ?",
+                               (count, today_str, user_id))
+        else:
+            count = 0
+            cursor.execute("INSERT INTO message_counts (user_id, count, last_reset_date) VALUES (?, ?, ?)",
+                           (user_id, count, today_str))
+    return FREE_QUESTIONS_PER_DAY - count
+
+def increment_question_count(user_id: int) -> int:
+    if is_premium(user_id):
+        return FREE_QUESTIONS_PER_DAY
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT count, last_reset_date FROM message_counts WHERE user_id = ?", (user_id,))
+        row = cursor.fetchone()
+        if row:
+            count, last_reset = row
+            if last_reset != today_str:
+                count = 0
+            count += 1
+            cursor.execute("UPDATE message_counts SET count = ?, last_reset_date = ? WHERE user_id = ?",
+                           (count, today_str, user_id))
+        else:
+            count = 1
+            cursor.execute("INSERT INTO message_counts (user_id, count, last_reset_date) VALUES (?, ?, ?)",
+                           (user_id, count, today_str))
+    return FREE_QUESTIONS_PER_DAY - count
+
+def activate_premium(user_id: int, duration_days: int = 30):
+    until = datetime.now() + timedelta(days=duration_days)
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET is_premium = 1, premium_until = ? WHERE user_id = ?",
+                       (until.isoformat(), user_id))
 
 # ========== ПРАВИЛЬНОЕ ОПРЕДЕЛЕНИЕ ЗНАКОВ ЗОДИАКА ==========
 def get_zodiac_sign(day: int, month: int) -> str:
@@ -115,24 +247,23 @@ def calculate_fate_number(birth_date: str, gender: str = "female") -> tuple:
         total = day + month + year
         while total > 9:
             total = sum(int(d) for d in str(total))
-        
-        detailed_descriptions = {
+        descriptions = {
             1: ("🔴 **1 — Число Лидера**\n\nТы — прирождённый первопроходец! Твоя миссия — начинать новое и вдохновлять других. Ты независим" + ("а" if gender == "female" else "") + ", амбициозен" + ("на" if gender == "female" else "") + " и полон" + ("а" if gender == "female" else "") + " идей. \n\n✨ **Твой путь:** самостоятельность и смелость.\n💫 **Твой талант:** ты видишь то, что другие не замечают.\n🌟 **Совет:** доверяй своей интуиции и не бойся быть первым" + ("ой" if gender == "female" else "") + "!"),
-            2: ("🟠 **2 — Число Миротворца**\n\nТы — душа любой компании, дипломат и миротворец. Твоя суперсила — создавать гармонию там, где хаос. \n\n✨ **Твой путь:** сотрудничество и понимание.\n💫 **Твой талант:** ты чувствуешь эмоции других.\n🌟 **Совет:** не забывай о своих желаниях, заботясь о других!"),
-            3: ("🟡 **3 — Число Творца**\n\nТы — источник радости и вдохновения! Твоя энергия заражает всех вокруг. \n\n✨ **Твой путь:** самовыражение и творчество.\n💫 **Твой талант:** ты легко находишь слова и идеи.\n🌟 **Совет:** не бойся быть в центре внимания — это твоя стихия!"),
-            4: ("🟢 **4 — Число Строителя**\n\nТы — надёжная опора для всех. Твоя сила в дисциплине и упорстве. \n\n✨ **Твой путь:** создание прочных основ.\n💫 **Твой талант:** ты доводишь дела до конца.\n🌟 **Совет:** иногда позволяй себе отдыхать и не будь слишком строг" + ("ой" if gender == "female" else "им") + " к себе!"),
-            5: ("🔵 **5 — Число Свободы**\n\nТы — искатель приключений! Перемены — твой двигатель, рутина — твой враг. \n\n✨ **Твой путь:** свобода и новые впечатления.\n💫 **Твой талант:** ты легко адаптируешься к любому.\n🌟 **Совет:** наслаждайся путешествиями и новыми знакомствами!"),
-            6: ("🔵 **6 — Число Заботы**\n\nТы — сердце семьи и опора для близких. Твоя любовь безусловна. \n\n✨ **Твой путь:** забота и ответственность.\n💫 **Твой талант:** ты создаёшь уют и гармонию.\n🌟 **Совет:** не забывай заботиться и о себе!"),
-            7: ("🟣 **7 — Число Мудрости**\n\nТы — исследователь глубин. Тебе нужно время для размышлений и одиночества. \n\n✨ **Твой путь:** познание и мудрость.\n💫 **Твой талант:** ты видишь то, что скрыто от других.\n🌟 **Совет:** доверяй своей интуиции — она редко ошибается!"),
-            8: ("⚫️ **8 — Число Силы**\n\nТы — рождённ" + ("ая" if gender == "female" else "ый") + " для успеха! Деньги и власть приходят к тебе, когда ты в гармонии с собой. \n\n✨ **Твой путь:** материальная реализация.\n💫 **Твой талант:** ты умеешь зарабатывать и управлять.\n🌟 **Совет:** не забывай о духовном развитии!"),
-            9: ("⚪️ **9 — Число Завершения**\n\nТы — гуманист и учитель. Твоя миссия — помогать другим и завершать старое, открывая путь новому. \n\n✨ **Твой путь:** служение людям.\n💫 **Твой талант:** ты чувствуешь боль других и хочешь помочь.\n🌟 **Совет:** научись прощать и отпускать — это твой ключ к счастью!")
+            2: "🟠 **2 — Число Миротворца**\n\nТы — душа любой компании, дипломат и миротворец. Твоя суперсила — создавать гармонию там, где хаос. \n\n✨ **Твой путь:** сотрудничество и понимание.\n💫 **Твой талант:** ты чувствуешь эмоции других.\n🌟 **Совет:** не забывай о своих желаниях, заботясь о других!",
+            3: "🟡 **3 — Число Творца**\n\nТы — источник радости и вдохновения! Твоя энергия заражает всех вокруг. \n\n✨ **Твой путь:** самовыражение и творчество.\n💫 **Твой талант:** ты легко находишь слова и идеи.\n🌟 **Совет:** не бойся быть в центре внимания — это твоя стихия!",
+            4: "🟢 **4 — Число Строителя**\n\nТы — надёжная опора для всех. Твоя сила в дисциплине и упорстве. \n\n✨ **Твой путь:** создание прочных основ.\n💫 **Твой талант:** ты доводишь дела до конца.\n🌟 **Совет:** иногда позволяй себе отдыхать и не будь слишком строг" + ("ой" if gender == "female" else "им") + " к себе!",
+            5: "🔵 **5 — Число Свободы**\n\nТы — искатель приключений! Перемены — твой двигатель, рутина — твой враг. \n\n✨ **Твой путь:** свобода и новые впечатления.\n💫 **Твой талант:** ты легко адаптируешься к любому.\n🌟 **Совет:** наслаждайся путешествиями и новыми знакомствами!",
+            6: "🔵 **6 — Число Заботы**\n\nТы — сердце семьи и опора для близких. Твоя любовь безусловна. \n\n✨ **Твой путь:** забота и ответственность.\n💫 **Твой талант:** ты создаёшь уют и гармонию.\n🌟 **Совет:** не забывай заботиться и о себе!",
+            7: "🟣 **7 — Число Мудрости**\n\nТы — исследователь глубин. Тебе нужно время для размышлений и одиночества. \n\n✨ **Твой путь:** познание и мудрость.\n💫 **Твой талант:** ты видишь то, что скрыто от других.\n🌟 **Совет:** доверяй своей интуиции — она редко ошибается!",
+            8: "⚫️ **8 — Число Силы**\n\nТы — рождённ" + ("ая" if gender == "female" else "ый") + " для успеха! Деньги и власть приходят к тебе, когда ты в гармонии с собой. \n\n✨ **Твой путь:** материальная реализация.\n💫 **Твой талант:** ты умеешь зарабатывать и управлять.\n🌟 **Совет:** не забывай о духовном развитии!",
+            9: "⚪️ **9 — Число Завершения**\n\nТы — гуманист и учитель. Твоя миссия — помогать другим и завершать старое, открывая путь новому. \n\n✨ **Твой путь:** служение людям.\n💫 **Твой талант:** ты чувствуешь боль других и хочешь помочь.\n🌟 **Совет:** научись прощать и отпускать — это твой ключ к счастью!"
         }
-        return (total, detailed_descriptions.get(total, ("✨ Уникальная личность с особенным путём!")))
+        return (total, descriptions.get(total, "✨ Уникальная личность с особенным путём!"))
     except:
         return (0, "❌ Ошибка формата даты. Пожалуйста, используй ДД.ММ.ГГГГ")
 
 # ========== КРАСИВЫЙ РАСЧЕТ СОВМЕСТИМОСТИ ==========
-def get_compatibility(date1: str, date2: str) -> dict:
+def get_compatibility(date1: str, date2: str, premium: bool = False) -> dict:
     try:
         day1, month1, _ = map(int, date1.split('.'))
         day2, month2, _ = map(int, date2.split('.'))
@@ -150,48 +281,35 @@ def get_compatibility(date1: str, date2: str) -> dict:
         
         if elem1 == elem2:
             compatibility = random.randint(85, 98)
-            text = f"🌟 **Идеальный союз!** Вы принадлежите к одной стихии {elem1}, поэтому понимаете друг друга с полуслова. Вас ждёт глубокая эмоциональная связь и долгие счастливые отношения 💕"
+            base_text = f"🌟 **Идеальный союз!** Вы принадлежите к одной стихии {elem1}, поэтому понимаете друг друга с полуслова."
         elif (elem1 in ["Огонь 🔥", "Воздух 💨"]) and (elem2 in ["Огонь 🔥", "Воздух 💨"]):
             compatibility = random.randint(75, 90)
-            text = f"💫 **Яркая пара!** {elem1} + {elem2} = взрывная смесь страсти и свободы. Вы будете вдохновлять друг друга на великие дела! 🚀"
+            base_text = f"💫 **Яркая пара!** {elem1} + {elem2} = взрывная смесь страсти и свободы."
         elif (elem1 in ["Земля 🌍", "Вода 💧"]) and (elem2 in ["Земля 🌍", "Вода 💧"]):
             compatibility = random.randint(80, 95)
-            text = f"🌱 **Гармоничный союз!** {elem1} и {elem2} создают плодородную почву для любви и заботы. Это отношения, в которых хочется строить дом и растить детей 🏡"
+            base_text = f"🌱 **Гармоничный союз!** {elem1} и {elem2} создают плодородную почву для любви."
         else:
             compatibility = random.randint(50, 70)
-            text = f"🦋 **Загадочный союз.** Вы очень разные, но именно это делает вашу пару уникальной. Если научитесь ценить различия — откроете новый мир!"
+            base_text = f"🦋 **Загадочный союз.** Вы очень разные, но именно это делает вашу пару уникальной."
         
-        return {"percent": compatibility, "text": text, "sign1": sign1, "sign2": sign2}
+        if premium:
+            additional = f"\n\n✨ **Развёрнутый анализ Premium:**\n• Сильные стороны: взаимное вдохновение, страсть, интерес\n• Точки роста: учитесь терпению и принятию различий\n• Кармическая задача: построить крепкий союз на основе взаимного уважения"
+        else:
+            additional = f"\n\n🔓 **Полный разбор совместимости доступен по подписке Premium** (99 ₽/мес):\n• Сильные и слабые стороны пары\n• Кармическая задача\n• Прогноз развития отношений"
+        
+        return {"percent": compatibility, "text": base_text + additional, "sign1": sign1, "sign2": sign2}
     except:
         return {"percent": 0, "text": "❌ Ошибка формата даты"}
 
-# ========== ПОЛУЧЕНИЕ ОБРАЩЕНИЯ В ЗАВИСИМОСТИ ОТ ПОЛА ==========
-def get_pronouns(gender: str, form: str = "you") -> str:
-    """Возвращает правильное обращение в зависимости от пола"""
-    if gender == "female":
-        return {
-            "you": "ты", "you_upper": "Ты",
-            "your": "твоя", "your_m": "твой", "your_f": "твоя",
-            "yourself": "себя", "beautiful": "красивая",
-            "friend": "дорогая", "one": "одна", "ended": "а",
-            "he_she": "она", "him_her": "её", "his_her": "её"
-        }
-    else:
-        return {
-            "you": "ты", "you_upper": "Ты",
-            "your": "твой", "your_m": "твой", "your_f": "твоя",
-            "yourself": "себя", "beautiful": "красивый",
-            "friend": "дорогой", "one": "один", "ended": "",
-            "he_she": "он", "him_her": "его", "his_her": "его"
-        }
+# ========== ХРАНИЛИЩЕ ИСТОРИИ ДИАЛОГОВ ==========
+user_history = {}
+user_problems = {}
 
-# ========== СИСТЕМНЫЙ ПРОМПТ С УЧЁТОМ ПОЛА ==========
 def get_system_prompt(gender: str, name: str) -> str:
-    pronouns = get_pronouns(gender)
+    pronoun = "девушка" if gender == "female" else "парень"
     return f"""Ты — эмпатичный психолог-помощник по имени {PSYCHOLOGIST_NAME}.
 
-Обращайся к пользователю на "{pronouns['you']}" и используй женские или мужские окончания в зависимости от пола пользователя.
-Пользователь{pronouns['ended']} {pronouns['he_she']} {pronouns['your']} зовут {name}.
+Пользователь — {pronoun} по имени {name}. Обращайся к нему/ней соответственно (используй окончания "а" для женщин, "ил" для мужчин).
 
 Правила:
 1. Внимательно слушай и задавай вопросы.
@@ -201,7 +319,7 @@ def get_system_prompt(gender: str, name: str) -> str:
 5. После 4-6 обменов мягко предложи записаться к психологу.
 6. В конце сообщения с предложением записи добавь: "ЗАПИСЬ_ГОТОВА"
 
-Отвечай коротко (2-4 предложения) на русском, используя правильные окончания (например, "хочешь/хочешь" без разницы, но "рада/рад", "сделала/сделал" и т.д.)."""
+Отвечай коротко (2-4 предложения) на русском, используя правильные окончания."""
 
 def get_history(user_id: int, gender: str, name: str):
     if user_id not in user_history:
@@ -240,12 +358,8 @@ def save_to_google_sheets(user_id: int, username: str, problem: str, direction: 
             return False
         
         moscow_time = datetime.now() + timedelta(hours=3)
-        
         creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
-        creds = Credentials.from_service_account_info(
-            creds_dict,
-            scopes=["https://www.googleapis.com/auth/spreadsheets"]
-        )
+        creds = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets"])
         client = gspread.authorize(creds)
         sheet = client.open_by_key(SHEET_ID).sheet1
         
@@ -253,15 +367,7 @@ def save_to_google_sheets(user_id: int, username: str, problem: str, direction: 
             headers = ["Timestamp", "User ID", "Username", "Problem", "Direction", "Contact", "Status"]
             sheet.append_row(headers)
         
-        row = [
-            moscow_time.strftime("%Y-%m-%d %H:%M:%S"),
-            user_id,
-            username,
-            problem[:200],
-            direction,
-            contact,
-            "new"
-        ]
+        row = [moscow_time.strftime("%Y-%m-%d %H:%M:%S"), user_id, username, problem[:200], direction, contact, "new"]
         sheet.append_row(row)
         print(f"✅ Заявка сохранена: {username}")
         return True
@@ -269,40 +375,110 @@ def save_to_google_sheets(user_id: int, username: str, problem: str, direction: 
         print(f"❌ Ошибка: {e}")
         return False
 
-# ========== ОСНОВНЫЕ ОБРАБОТЧИКИ ==========
+# ========== ПОДПИСКА И ОГРАНИЧЕНИЯ ==========
+@dp.message(F.text == "⭐ Подписка Premium")
+async def show_premium_info(message: types.Message):
+    user_id = message.from_user.id
+    if is_premium(user_id):
+        await message.answer(
+            "💎 **У вас уже активна Premium-подписка!** 💎\n\n"
+            "Спасибо, что поддерживаете проект.\n\n"
+            "Доступны все функции без ограничений ✨",
+            reply_markup=menu_keyboard
+        )
+    else:
+        remaining = get_remaining_questions(user_id)
+        await message.answer(
+            f"⭐ **Premium-подписка 99 Telegram Stars/мес** ⭐\n\n"
+            f"📊 **Ваш лимит сегодня:** {remaining}/{FREE_QUESTIONS_PER_DAY} бесплатных вопросов\n\n"
+            f"💎 **Что даёт Premium:**\n"
+            f"✅ Безлимитные вопросы к ИИ-психологу\n"
+            f"✅ Расширенные ответы в разделе «Совместимость»\n"
+            f"✅ Персонализированные прогнозы\n"
+            f"✅ Приоритетную поддержку\n\n"
+            f"✨ Нажмите кнопку ниже, чтобы оформить подписку!",
+            reply_markup=premium_keyboard
+        )
+
+@dp.callback_query(lambda c: c.data == "what_is_premium")
+async def what_is_premium(callback: types.CallbackQuery):
+    await callback.answer()
+    await callback.message.answer(
+        "🔮 **Что даёт Premium-подписка?**\n\n"
+        "1️⃣ **Безлимитные консультации** с ИИ-психологом — без ограничения в 7 вопросов в день.\n\n"
+        "2️⃣ **Полный разбор совместимости** — вы получите детальный анализ пары: сильные стороны, точки роста, кармические задачи.\n\n"
+        "3️⃣ **Расширенные прогнозы** — гороскоп и число дня с подробными рекомендациями.\n\n"
+        "4️⃣ **Приоритетная поддержка** — ваши вопросы к психологу Дарье обрабатываются в первую очередь.\n\n"
+        "💎 **Стоимость:** всего 99 Stars (~99 ₽) в месяц.\n\n"
+        "Нажмите «Оформить подписку», чтобы начать ✨"
+    )
+
+@dp.callback_query(lambda c: c.data == "buy_subscription")
+async def buy_subscription(callback: types.CallbackQuery):
+    await callback.answer()
+    prices = [LabeledPrice(label="Premium-подписка на месяц", amount=SUBSCRIPTION_PRICE)]
+    await callback.message.answer_invoice(
+        title="Premium-подписка",
+        description="Неограниченные консультации с ИИ-психологом + расширенные функции",
+        payload="premium_subscription_30d",
+        provider_token="",
+        currency="XTR",
+        prices=prices,
+        start_parameter="premium_start"
+    )
+
+@dp.pre_checkout_query()
+async def process_pre_checkout(query: PreCheckoutQuery):
+    await query.answer(ok=True)
+
+@dp.message(F.successful_payment)
+async def process_successful_payment(message: types.Message):
+    user_id = message.from_user.id
+    activate_premium(user_id, 30)
+    await message.answer(
+        "💎 **Поздравляем! Premium-подписка активирована!** 💎\n\n"
+        "✨ Теперь вам доступны безлимитные консультации и все расширенные функции.\n\n"
+        "Спасибо, что поддерживаете проект! 🙏",
+        reply_markup=menu_keyboard
+    )
+
+# ========== ОБРАБОТЧИК КОМАНДЫ СТАРТ ==========
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
+    remaining = get_remaining_questions(user_id)
+    premium_status = "💎 Premium" if is_premium(user_id) else f"📊 {remaining}/{FREE_QUESTIONS_PER_DAY} вопросов сегодня"
     
-    # Если пол уже выбран — сразу в диалог
-    if user_id in user_data and "gender" in user_data[user_id]:
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT gender FROM users WHERE user_id = ?", (user_id,))
+        row = cursor.fetchone()
+    
+    if row and row[0]:
         await state.clear()
         if user_id in user_history:
             del user_history[user_id]
         if user_id in user_problems:
             del user_problems[user_id]
         
-        pronouns = get_pronouns(user_data[user_id]["gender"])
+        gender = row[0]
+        name = message.from_user.first_name or "друг"
+        greeting = "возвращайся" if gender == "female" else "возвращайся"
         await message.answer(
-            f"✨ **С возвращением, {pronouns['beautiful']}!** ✨\n\n"
-            f"🌸 Я {PSYCHOLOGIST_NAME}, твой персональный гид в мире самопознания и магии чисел.\n\n"
-            f"💫 Что хочешь узнать?\n"
-            f"🔮 **Число судьбы**\n"
-            f"⭐ **Гороскоп**\n"
-            f"♊ **Совместимость**\n"
-            f"🎴 **Карта дня Таро**\n\n"
-            f"👇 **Используй кнопки меню или просто напиши мне!**",
+            f"✨ **С {greeting}, {name}!** ✨\n\n"
+            f"🌸 Я {PSYCHOLOGIST_NAME}, твой персональный гид в мире самопознания.\n"
+            f"Твой статус: {premium_status}\n\n"
+            f"💫 Используй кнопки меню или просто напиши мне!",
             reply_markup=menu_keyboard,
             parse_mode="Markdown"
         )
         await state.set_state(Dialogue.chatting)
         return
     
-    # Если пол не выбран — спрашиваем
     await state.set_state(Dialogue.choosing_gender)
     await message.answer(
         f"✨ **Привет, {message.from_user.first_name or 'дорогой друг'}!** ✨\n\n"
-        f"🌸 Я {PSYCHOLOGIST_NAME}, твой персональный помощник в мире самопознания.\n\n"
+        f"🌸 Я {PSYCHOLOGIST_NAME}, твой персональный помощник.\n\n"
         f"💫 Прежде чем мы начнём, скажи, как к тебе обращаться?\n\n"
         f"👇 **Выбери свой пол:**",
         reply_markup=gender_keyboard,
@@ -313,7 +489,6 @@ async def cmd_start(message: types.Message, state: FSMContext):
 async def process_gender(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     text = message.text.lower()
-    
     if "жен" in text or text == "👩 женский":
         gender = "female"
         greeting = "👩 Рада знакомству, прекрасная дама!"
@@ -324,28 +499,22 @@ async def process_gender(message: types.Message, state: FSMContext):
         await message.answer("Пожалуйста, выбери свой пол, нажав на кнопку ниже 👇", reply_markup=gender_keyboard)
         return
     
-    # Сохраняем пол и имя пользователя
-    user_data[user_id] = {
-        "gender": gender,
-        "name": message.from_user.first_name or "друг"
-    }
+    set_user_gender(user_id, message.from_user.username or "", gender, message.from_user.first_name or "друг")
+    remaining = get_remaining_questions(user_id)
     
     await state.clear()
     await message.answer(
         f"{greeting}\n\n"
-        f"🌸 Я {PSYCHOLOGIST_NAME}, твой персональный гид в мире самопознания и магии чисел.\n\n"
-        f"💫 Что хочешь узнать?\n"
-        f"🔮 **Число судьбы**\n"
-        f"⭐ **Гороскоп**\n"
-        f"♊ **Совместимость**\n"
-        f"🎴 **Карта дня Таро**\n\n"
-        f"👇 **Используй кнопки меню или просто напиши мне!**\n\n"
-        f"✨ А я буду обращаться к тебе с учётом твоего пола! ✨",
+        f"🌸 Я {PSYCHOLOGIST_NAME}, твой помощник.\n"
+        f"📊 Лимит сегодня: {remaining}/{FREE_QUESTIONS_PER_DAY} вопросов.\n"
+        f"⭐ Подписка Premium снимает лимиты и открывает расширенные функции.\n\n"
+        f"👇 **Используй кнопки меню или просто напиши мне!**",
         reply_markup=menu_keyboard,
         parse_mode="Markdown"
     )
     await state.set_state(Dialogue.chatting)
 
+# ========== ОСТАЛЬНЫЕ КОМАНДЫ (С УЧЁТОМ ЛИМИТОВ) ==========
 @dp.message(Command("cancel"))
 async def cmd_cancel(message: types.Message, state: FSMContext):
     await state.clear()
@@ -360,27 +529,24 @@ async def cmd_reset(message: types.Message, state: FSMContext):
     if user_id in user_problems:
         del user_problems[user_id]
     await state.clear()
-    
-    pronouns = get_pronouns(user_data.get(user_id, {}).get("gender", "female"))
-    await message.answer(
-        f"🧹 История нашего разговора очищена, {pronouns['beautiful']}. Начинаем с чистого листа!",
-        reply_markup=menu_keyboard
-    )
+    await message.answer("🧹 История очищена.", reply_markup=menu_keyboard)
     await state.set_state(Dialogue.chatting)
 
-# ========== КНОПКИ МЕНЮ ==========
 @dp.message(F.text == "ℹ️ Помощь")
 async def menu_help(message: types.Message):
+    user_id = message.from_user.id
+    remaining = get_remaining_questions(user_id)
     await message.answer(
-        "📖 **Что я умею?**\n\n"
-        "💬 **Просто напиши** — я выслушаю и поддержу\n"
-        "🔮 **Число судьбы** — введи дату рождения, узнаешь свои таланты\n"
-        "⭐ **Гороскоп** — выбери знак или отправь дату рождения\n"
-        "♊ **Совместимость** — введи две даты, узнай будущее пары\n"
-        "🎴 **Карта дня Таро** — мудрый совет на сегодня\n"
-        "📞 **Запись к психологу** — оставь контакт, я передам Дарье\n\n"
-        "🗑 /reset — начать диалог заново\n"
-        "❌ /cancel — отменить текущее действие",
+        f"📖 **Что я умею?**\n\n"
+        f"📊 Осталось вопросов сегодня: {remaining}/{FREE_QUESTIONS_PER_DAY}\n\n"
+        f"💬 **Просто напиши** — я выслушаю и поддержу\n"
+        f"🔮 **Число судьбы** — введи дату рождения\n"
+        f"⭐ **Гороскоп** — выбери знак или отправь дату\n"
+        f"♊ **Совместимость** — введи две даты\n"
+        f"🎴 **Карта дня Таро** — мудрый совет\n"
+        f"📞 **Запись к психологу** — живая консультация\n"
+        f"⭐ **Подписка Premium** — безлимитные вопросы + расширенные функции\n\n"
+        f"🗑 /reset — начать заново\n❌ /cancel — отмена",
         reply_markup=menu_keyboard
     )
 
@@ -392,75 +558,144 @@ async def menu_reset(message: types.Message, state: FSMContext):
     if user_id in user_problems:
         del user_problems[user_id]
     await state.clear()
-    pronouns = get_pronouns(user_data.get(user_id, {}).get("gender", "female"))
-    await message.answer(f"🧹 История очищена, {pronouns['beautiful']}!", reply_markup=menu_keyboard)
+    await message.answer("🧹 История очищена.", reply_markup=menu_keyboard)
     await state.set_state(Dialogue.chatting)
 
 @dp.message(F.text == "🔮 Число судьбы")
 async def fate_number_start(message: types.Message, state: FSMContext):
     await state.set_state(Dialogue.waiting_for_birthdate)
     await message.answer(
-        "🔮 **Расчёт числа судьбы**\n\n"
-        "Введи свою дату рождения в формате:\n`ДД.ММ.ГГГГ`\n\n"
-        "🌙 Например: 15.05.1990",
+        "🔮 **Расчёт числа судьбы**\n\nВведи свою дату рождения в формате `ДД.ММ.ГГГГ`\n🌙 Например: 15.05.1990",
         parse_mode="Markdown"
     )
+
+@dp.message(StateFilter(Dialogue.waiting_for_birthdate))
+async def process_fate_number(message: types.Message, state: FSMContext):
+    if not re.match(r'^\d{2}\.\d{2}\.\d{4}$', message.text):
+        await message.answer("❌ Неверный формат. Введи как `ДД.ММ.ГГГГ`, например 15.05.1990", reply_markup=menu_keyboard)
+        return
+    user_id = message.from_user.id
+    gender = get_user_gender(user_id)
+    number, description = calculate_fate_number(message.text, gender)
+    await message.answer(f"🔮 **Твоё число судьбы — {number}** 🔮\n\n{description}", parse_mode="Markdown", reply_markup=menu_keyboard)
+    await state.set_state(Dialogue.chatting)
 
 @dp.message(F.text == "⭐ Гороскоп")
 async def horoscope_start(message: types.Message, state: FSMContext):
     await state.set_state(Dialogue.waiting_for_zodiac)
     await message.answer(
-        "⭐ **Гороскоп на сегодня**\n\n"
-        "Введи свой знак зодиака или дату рождения:\n\n"
-        "♈ Овен, ♉ Телец, ♊ Близнецы, ♋ Рак, ♌ Лев, ♍ Дева,\n"
-        "♎ Весы, ♏ Скорпион, ♐ Стрелец, ♑ Козерог, ♒ Водолей, ♓ Рыбы\n\n"
-        "✨ Или просто отправь дату: `ДД.ММ.ГГГГ`",
+        "⭐ **Гороскоп на сегодня**\n\nВведи знак зодиака или дату рождения:\n"
+        "Овен, Телец, Близнецы, Рак, Лев, Дева, Весы, Скорпион, Стрелец, Козерог, Водолей, Рыбы\n\n"
+        "✨ Или отправь дату `ДД.ММ.ГГГГ`",
         parse_mode="Markdown"
     )
+
+@dp.message(StateFilter(Dialogue.waiting_for_zodiac))
+async def process_horoscope(message: types.Message, state: FSMContext):
+    text = message.text.strip()
+    zodiac_sign = None
+    if re.match(r'^\d{2}\.\d{2}\.\d{4}$', text):
+        day, month, _ = map(int, text.split('.'))
+        zodiac_sign = get_zodiac_sign(day, month)
+        await message.answer(f"♈ **Твой знак: {zodiac_sign}** ♈")
+    else:
+        known = {"овен":"Овен","телец":"Телец","близнецы":"Близнецы","рак":"Рак","лев":"Лев","дева":"Дева","весы":"Весы","скорпион":"Скорпион","стрелец":"Стрелец","козерог":"Козерог","водолей":"Водолей","рыбы":"Рыбы"}
+        if text.lower() in known:
+            zodiac_sign = known[text.lower()]
+        else:
+            await message.answer("❌ Неизвестный знак.", reply_markup=menu_keyboard)
+            return
+    forecasts = {
+        "Овен": "🔥 Энергия бьёт ключом! Начни новые дела!",
+        "Телец": "💰 Хороший день для финансовых решений.",
+        "Близнецы": "💬 День общения и новых знакомств.",
+        "Рак": "🏠 День интуиции и семьи.",
+        "Лев": "🎭 Творческий день. Покажи себя!",
+        "Дева": "📋 День порядка и планирования.",
+        "Весы": "⚖️ День гармонии. Избегай конфликтов.",
+        "Скорпион": "🦂 День трансформации.",
+        "Стрелец": "✈️ День приключений и оптимизма.",
+        "Козерог": "🏔️ День достижений.",
+        "Водолей": "💡 День идей и нестандартных решений.",
+        "Рыбы": "🎨 День творчества и интуиции."
+    }
+    forecast = forecasts.get(zodiac_sign, "🌟 Гармоничный день.")
+    await message.answer(f"✨ **Гороскоп для {zodiac_sign}** ✨\n\n📅 {forecast}", parse_mode="Markdown", reply_markup=menu_keyboard)
+    await state.set_state(Dialogue.chatting)
 
 @dp.message(F.text == "♊ Совместимость")
 async def compatibility_start(message: types.Message, state: FSMContext):
     await state.set_state(Dialogue.waiting_for_birthdate_comp)
     await message.answer(
-        "💕 **Расчёт совместимости**\n\n"
-        "Введи **первую** дату рождения:\n`ДД.ММ.ГГГГ`\n\n"
-        "🌙 Например: 15.05.1990",
+        "💕 **Расчёт совместимости**\n\nВведи **первую** дату рождения в формате `ДД.ММ.ГГГГ`\n🌙 Например: 15.05.1990",
         parse_mode="Markdown"
     )
 
+@dp.message(StateFilter(Dialogue.waiting_for_birthdate_comp))
+async def process_compatibility_first(message: types.Message, state: FSMContext):
+    if not re.match(r'^\d{2}\.\d{2}\.\d{4}$', message.text):
+        await message.answer("❌ Неверный формат. Введи как `ДД.ММ.ГГГГ`", reply_markup=menu_keyboard)
+        return
+    await state.update_data(date1=message.text)
+    await state.set_state(Dialogue.waiting_for_birthdate_comp2)
+    await message.answer("💕 Теперь введи **вторую** дату рождения в формате `ДД.ММ.ГГГГ`", parse_mode="Markdown")
+
+@dp.message(StateFilter(Dialogue.waiting_for_birthdate_comp2))
+async def process_compatibility_second(message: types.Message, state: FSMContext):
+    if not re.match(r'^\d{2}\.\d{2}\.\d{4}$', message.text):
+        await message.answer("❌ Неверный формат. Введи как `ДД.ММ.ГГГГ`", reply_markup=menu_keyboard)
+        return
+    data = await state.get_data()
+    date1 = data.get('date1')
+    if not date1:
+        await message.answer("❌ Ошибка. Начни заново.", reply_markup=menu_keyboard)
+        await state.clear()
+        return
+    user_id = message.from_user.id
+    premium = is_premium(user_id)
+    result = get_compatibility(date1, message.text, premium)
+    if result['percent'] == 0:
+        await message.answer(f"❌ {result['text']}", reply_markup=menu_keyboard)
+    else:
+        await message.answer(
+            f"💕 **Результат совместимости** 💕\n\n"
+            f"📅 {date1} → **{result['sign1']}**\n"
+            f"📅 {message.text} → **{result['sign2']}**\n\n"
+            f"🌟 **Совместимость: {result['percent']}%** 🌟\n\n{result['text']}",
+            parse_mode="Markdown",
+            reply_markup=menu_keyboard
+        )
+    await state.set_state(Dialogue.chatting)
+
 @dp.message(F.text == "🎴 Карта дня Таро")
 async def taro_card_handler(message: types.Message):
-    taro_cards = {
-        "Шут": "🎭 **Шут** — Новое начало!\n\nТы стоишь на пороге приключения. Пора сделать первый шаг туда, куда давно боялась заглянуть. Доверься Вселенной — она поддержит!",
-        "Маг": "🪄 **Маг** — Сила внутри!\n\nУ тебя есть всё необходимое для исполнения желаний. Просто поверь в себя и действуй! Твои ресурсы безграничны.",
-        "Верховная Жрица": "🌙 **Верховная Жрица** — Тайны откроются.\n\nПрислушайся к своей интуиции сегодня. Ответы уже внутри тебя — просто загляни вглубь себя.",
-        "Императрица": "👑 **Императрица** — Твори и созидай!\n\nЭто время любви, заботы и творчества. Посей семена — и скоро пожнёшь плоды.",
-        "Император": "🏛️ **Император** — Структура и порядок.\n\nПришло время навести порядок в делах. Твоя сила в дисциплине и твёрдости.",
-        "Иерофант": "⛪ **Иерофант** — Мудрый наставник.\n\nОбратись за советом к тому, кому доверяешь. Или стань наставником для кого-то.",
-        "Влюбленные": "💕 **Влюблённые** — Сердечный выбор!\n\nСудьба ставит перед важным решением. Слушай сердце — оно не обманет.",
-        "Колесница": "⚡ **Колесница** — Победа будет!\n\nПреодолей сомнения и двигайся вперёд. Успех уже близко!",
-        "Сила": "🦁 **Сила** — Ты справишься!\n\nВнутри тебя скрыта огромная мощь. Не бойся проявлять её с любовью и терпением.",
-        "Отшельник": "🏮 **Отшельник** — Время тишины.\n\nПобудь наедине с собой. Ответы придут, когда ты успокоишь ум.",
-        "Колесо Фортуны": "🎡 **Колесо Фортуны** — Жизнь меняется!\n\nЖди перемен! Что-то старое уходит, уступая место новому и лучшему.",
-        "Справедливость": "⚖️ **Справедливость** — Честность превыше всего.\n\nСегодня важно быть честной с собой и другими. Правда восторжествует.",
-        "Повешенный": "🪢 **Повешенный** — Новый взгляд.\n\nПопробуй посмотреть на ситуацию под другим углом. Возможно, ты увидишь выход там, где раньше не замечала.",
-        "Смерть": "♻️ **Смерть** — Трансформация.\n\nНе бойся отпустить прошлое. Закрывая одни двери, ты открываешь новые.",
-        "Умеренность": "⚖️ **Умеренность** — Баланс и гармония.\n\nНайди золотую середину во всём. Терпение и умеренность приведут к цели.",
-        "Дьявол": "😈 **Дьявол** — Освобождение.\n\nПора разорвать цепи, которые тебя сковывают. От чего тебе пора отказаться?",
-        "Башня": "🏛️💥 **Башня** — Внезапные перемены.\n\nЧто-то рушится, чтобы освободить место для нового. Не сопротивляйся — так нужно.",
-        "Звезда": "⭐ **Звезда** — Надежда сбывается!\n\nЗагадай желание! Вселенная готовит тебе подарок. Верь в лучшее.",
-        "Луна": "🌕 **Луна** — Слушай интуицию.\n\nНа поверхности не всё так, как кажется. Доверяй своему внутреннему голосу.",
-        "Солнце": "☀️ **Солнце** — Радость и успех!\n\nТвой день сияет! Наслаждайся моментом, делись теплом с окружающими.",
-        "Суд": "🎺 **Суд** — Пробуждение.\n\nНастал час подвести итоги и простить себя и других. Новый цикл начинается!",
-        "Мир": "🌍 **Мир** — Ты достигла цели!\n\nПоздравляю! Цикл завершён, ты на финише. Отдыхай и наслаждайся результатом."
+    cards = {
+        "Шут": "🎭 Новое начало! Пора сделать первый шаг в неизвестность.",
+        "Маг": "🪄 У тебя есть все ресурсы для исполнения желаний!",
+        "Верховная Жрица": "🌙 Доверься своей интуиции.",
+        "Императрица": "👑 Время творить и заботиться.",
+        "Император": "🏛️ Укрепляй свои границы.",
+        "Иерофант": "⛪ Обратись за советом к старшим.",
+        "Влюбленные": "💕 Важный выбор на пути.",
+        "Колесница": "⚡ Управляй своей судьбой!",
+        "Сила": "🦁 Ты сильнее, чем кажешься.",
+        "Отшельник": "🏮 Время побыть наедине.",
+        "Колесо Фортуны": "🎡 Жизнь меняется к лучшему.",
+        "Справедливость": "⚖️ Поступи справедливо.",
+        "Повешенный": "🪢 Посмотри на ситуацию иначе.",
+        "Смерть": "♻️ Старое уходит, новое приходит.",
+        "Умеренность": "⚖️ Найди золотую середину.",
+        "Дьявол": "😈 От чего пора отказаться?",
+        "Башня": "🏛️💥 Крах иллюзий, но для нового.",
+        "Звезда": "⭐ Верь в лучшее!",
+        "Луна": "🌕 Доверяй интуиции.",
+        "Солнце": "☀️ Всё будет хорошо!",
+        "Суд": "🎺 Время подвести итоги.",
+        "Мир": "🌍 Ты достигла цели!"
     }
-    
-    card_name = random.choice(list(taro_cards.keys()))
-    card_meaning = taro_cards[card_name]
-    
+    card_name = random.choice(list(cards.keys()))
     await message.answer(
-        f"🎴 **Твоя карта дня — {card_name}** 🎴\n\n{card_meaning}\n\n"
-        f"✨ Пусть этот день принесёт тебе волшебство! ✨",
+        f"🎴 **Твоя карта дня — {card_name}** 🎴\n\n{cards[card_name]}\n\n✨ Пусть этот день принесёт волшебство!",
         parse_mode="Markdown",
         reply_markup=menu_keyboard
     )
@@ -470,232 +705,96 @@ async def book_psychologist(message: types.Message, state: FSMContext):
     await message.answer(
         "🌸 **Запись на консультацию** 🌸\n\n"
         "Оставь свой контакт (@username или номер телефона), и психолог Дарья свяжется с тобой.\n\n"
-        "✨ Всё конфиденциально, ты в безопасности.\n\n"
-        "Или нажми /cancel для отмены.",
+        "✨ Всё конфиденциально.\n\nИли нажми /cancel для отмены.",
         reply_markup=ReplyKeyboardRemove()
     )
     await state.set_state(Dialogue.waiting_for_contact)
 
-# ========== ВВОД ДАННЫХ ДЛЯ РАСЧЕТОВ ==========
-@dp.message(StateFilter(Dialogue.waiting_for_birthdate))
-async def process_fate_number(message: types.Message, state: FSMContext):
-    if not re.match(r'^\d{2}\.\d{2}\.\d{4}$', message.text):
-        await message.answer("❌ Неверный формат. Введи как `ДД.ММ.ГГГГ`, например 15.05.1990", reply_markup=menu_keyboard)
-        return
-    
-    user_id = message.from_user.id
-    gender = user_data.get(user_id, {}).get("gender", "female")
-    number, description = calculate_fate_number(message.text, gender)
-    
-    await message.answer(
-        f"🔮 **Твоё число судьбы — {number}** 🔮\n\n{description}\n\n"
-        f"✨ Это число — ключ к пониманию твоих врождённых талантов! ✨",
-        parse_mode="Markdown",
-        reply_markup=menu_keyboard
-    )
-    await state.set_state(Dialogue.chatting)
-
-@dp.message(StateFilter(Dialogue.waiting_for_zodiac))
-async def process_horoscope(message: types.Message, state: FSMContext):
-    text = message.text.strip()
-    zodiac_sign = None
-    
-    if re.match(r'^\d{2}\.\d{2}\.\d{4}$', text):
-        day, month, _ = map(int, text.split('.'))
-        zodiac_sign = get_zodiac_sign(day, month)
-        await message.answer(f"♈ **Твой знак: {zodiac_sign}** ♈")
-    else:
-        known = {
-            "овен": "Овен", "телец": "Телец", "близнецы": "Близнецы",
-            "рак": "Рак", "лев": "Лев", "дева": "Дева",
-            "весы": "Весы", "скорпион": "Скорпион", "стрелец": "Стрелец",
-            "козерог": "Козерог", "водолей": "Водолей", "рыбы": "Рыбы"
-        }
-        if text.lower() in known:
-            zodiac_sign = known[text.lower()]
-        else:
-            await message.answer("❌ Неизвестный знак. Попробуй ещё раз.", reply_markup=menu_keyboard)
-            return
-    
-    detailed_forecasts = {
-        "Овен": "🔥 **Овен** — твоя энергия сегодня зашкаливает! Отличный день для начала новых проектов и спортивных достижений. Вечером жди приятных сюрпризов от близких.",
-        "Телец": "💰 **Телец** — сегодня твоя стихия — финансы. Удачный день для крупных покупок и инвестиций. Не упусти возможность!",
-        "Близнецы": "💬 **Близнецы** — звёзды советуют больше общаться. Жди новостей от старых друзей, возможна неожиданная встреча.",
-        "Рак": "🏠 **Рак** — лучший день для семьи и дома. Уют и забота наполнят тебя энергией на неделю вперёд.",
-        "Лев": "🎭 **Лев** — сегодня ты в центре внимания! Покажи свои таланты, не стесняйся. Вечером возможен романтический сюрприз.",
-        "Дева": "📋 **Дева** — день порядка и планирования. Разбери завалы — и почувствуешь невероятное облегчение.",
-        "Весы": "⚖️ **Весы** — гармония во всём! Хороший день для культурного досуга, похода в театр или музей.",
-        "Скорпион": "🦂 **Скорпион** — погрузись в свои глубины. Уединись и подумай о важном. Ответы придут сами.",
-        "Стрелец": "✈️ **Стрелец** — звёзды зовут в путешествия! Даже небольшая прогулка принесёт вдохновение.",
-        "Козерог": "🏔️ **Козерог** — день карьерных побед. Будь упорна — и достигнешь цели. Твой труд оценят.",
-        "Водолей": "💡 **Водолей** — идеи витают в воздухе! Записывай всё, что приходит в голову. Гениальное рядом.",
-        "Рыбы": "🎨 **Рыбы** — погрузись в творчество или медитацию. Это восстановит твои силы лучше любого отдыха."
-    }
-    
-    forecast = detailed_forecasts.get(zodiac_sign, "🌟 Звёзды шепчут: сегодня отличный день для тебя!")
-    await message.answer(
-        f"⭐ **Гороскоп для {zodiac_sign} на сегодня** ⭐\n\n{forecast}\n\n✨ Хорошего дня, звёздная! ✨",
-        parse_mode="Markdown",
-        reply_markup=menu_keyboard
-    )
-    await state.set_state(Dialogue.chatting)
-
-@dp.message(StateFilter(Dialogue.waiting_for_birthdate_comp))
-async def process_compatibility_first(message: types.Message, state: FSMContext):
-    if not re.match(r'^\d{2}\.\d{2}\.\d{4}$', message.text):
-        await message.answer("❌ Неверный формат. Введи как `ДД.ММ.ГГГГ`", reply_markup=menu_keyboard)
-        return
-    await state.update_data(date1=message.text)
-    await state.set_state(Dialogue.waiting_for_birthdate_comp2)
-    await message.answer("💕 Теперь введи **вторую** дату рождения:\n`ДД.ММ.ГГГГ`", parse_mode="Markdown")
-
-@dp.message(StateFilter(Dialogue.waiting_for_birthdate_comp2))
-async def process_compatibility_second(message: types.Message, state: FSMContext):
-    if not re.match(r'^\d{2}\.\d{2}\.\d{4}$', message.text):
-        await message.answer("❌ Неверный формат. Введи как `ДД.ММ.ГГГГ`", reply_markup=menu_keyboard)
-        return
-    
-    data = await state.get_data()
-    date1 = data.get('date1')
-    if not date1:
-        await message.answer("❌ Ошибка. Давай начнём заново.", reply_markup=menu_keyboard)
-        await state.clear()
-        return
-    
-    result = get_compatibility(date1, message.text)
-    if result['percent'] == 0:
-        await message.answer(f"❌ {result['text']}", reply_markup=menu_keyboard)
-    else:
-        await message.answer(
-            f"💕 **Результат совместимости** 💕\n\n"
-            f"📅 {date1} → **{result['sign1']}**\n"
-            f"📅 {message.text} → **{result['sign2']}**\n\n"
-            f"🌟 **Совместимость: {result['percent']}%** 🌟\n\n"
-            f"{result['text']}\n\n"
-            f"✨ Как тебе результат? Можешь рассказать подробности или спросить совет! ✨",
-            parse_mode="Markdown",
-            reply_markup=menu_keyboard
-        )
-    await state.set_state(Dialogue.chatting)
-
-# ========== ОБРАБОТКА ЗАПИСИ К ПСИХОЛОГУ ==========
 @dp.message(StateFilter(Dialogue.waiting_for_contact))
 async def process_contact(message: types.Message, state: FSMContext):
     contact = message.text
     user_id = message.from_user.id
     username = message.from_user.username or "None"
     problem_info = user_problems.get(user_id, {"problem": "Диалог с ИИ", "direction": "не определено"})
-    
     save_to_google_sheets(user_id, username, problem_info["problem"], problem_info["direction"], contact)
     await notify_psychologist(user_id, username, problem_info["problem"], problem_info["direction"], contact)
-    
     if user_id in user_history:
         del user_history[user_id]
     if user_id in user_problems:
         del user_problems[user_id]
-    
-    pronouns = get_pronouns(user_data.get(user_id, {}).get("gender", "female"))
     await message.answer(
-        f"🌸 **Спасибо, {pronouns['beautiful']}!** 🌸\n\n"
-        f"Я передала твой контакт психологу {PSYCHOLOGIST_NAME}.\n\n"
-        f"✨ Она свяжется с тобой в ближайшее время ✨\n\n"
-        f"Береги себя. Ты не одна! 💕",
+        f"🌸 **Спасибо!** Психолог {PSYCHOLOGIST_NAME} свяжется с тобой в ближайшее время.\n\nБереги себя 💕",
         reply_markup=menu_keyboard
     )
     await state.clear()
     await state.set_state(Dialogue.chatting)
 
-# ========== ОСНОВНОЙ ДИАЛОГ С ИИ ==========
+# ========== ОСНОВНОЙ ДИАЛОГ С ИИ (С ЛИМИТАМИ) ==========
 @dp.message(Dialogue.chatting)
 async def chat_with_ai(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     user_text = message.text
-    
-    menu_buttons = ["ℹ️ Помощь", "🗑 Очистить диалог", "🔮 Число судьбы", 
-                    "⭐ Гороскоп", "♊ Совместимость", "🎴 Карта дня Таро", 
-                    "📞 Запись к психологу"]
+    menu_buttons = ["ℹ️ Помощь", "🗑 Очистить диалог", "🔮 Число судьбы", "⭐ Гороскоп", "♊ Совместимость", "🎴 Карта дня Таро", "📞 Запись к психологу", "⭐ Подписка Premium"]
     if user_text in menu_buttons:
         return
-    
     print(f"📨 Получено: {user_text}")
-    
     crisis = ["суицид", "самоубийств", "не хочу жить", "покончить с собой", "умру"]
     if any(word in user_text.lower() for word in crisis):
-        await message.answer(
-            "🕊️ **Мне очень жаль, что тебе так тяжело** 🕊️\n\n"
-            "Пожалуйста, обратись за помощью прямо сейчас:\n"
-            "📞 **Телефон доверия:** 8-800-2000-122 (круглосуточно, анонимно)\n"
-            "🚑 **МЧС России:** 112\n\n"
-            "Ты не одна. Пожалуйста, позвони ❤️"
-        )
+        await message.answer("🕊️ Телефон доверия: 8-800-2000-122. Пожалуйста, позвони ❤️")
         return
-    
-    if not groq_client:
+    remaining = get_remaining_questions(user_id)
+    if remaining <= 0 and not is_premium(user_id):
         await message.answer(
-            "🤖 ИИ-ассистент временно недоступен. Пожалуйста, используй кнопки меню — их работа не зависит от интернета.",
+            f"📊 **Лимит бесплатных вопросов на сегодня исчерпан** ({FREE_QUESTIONS_PER_DAY}).\n\n"
+            f"⭐ Оформите Premium-подписку за 99 Stars/мес, чтобы снять ограничения и получить доступ к расширенным функциям!\n\n"
+            f"👉 Нажмите /subscribe или кнопку «⭐ Подписка Premium» в меню.",
             reply_markup=menu_keyboard
         )
         return
-    
     if user_id not in user_problems:
         user_problems[user_id] = {"problem": user_text, "direction": detect_direction(user_text)}
-    
     try:
-        gender = user_data.get(user_id, {}).get("gender", "female")
-        name = user_data.get(user_id, {}).get("name", "друг")
+        gender = get_user_gender(user_id)
+        name = get_user_name(user_id)
         history = get_history(user_id, gender, name)
         history.append({"role": "user", "content": user_text})
-        
         response = await groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=history,
             max_tokens=350,
             temperature=0.9
         )
-        
         answer = response.choices[0].message.content
         history.append({"role": "assistant", "content": answer})
-        
         if len(history) > 15:
             user_history[user_id] = [history[0]] + history[-12:]
         else:
             user_history[user_id] = history
-        
+        increment_question_count(user_id)
+        new_remaining = get_remaining_questions(user_id)
         if "ЗАПИСЬ_ГОТОВА" in answer:
             answer = answer.replace("ЗАПИСЬ_ГОТОВА", "").strip()
             if answer:
                 await message.answer(answer)
-            
-            book_keyboard = InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [InlineKeyboardButton(text="📝 Да, хочу записаться!", callback_data="book")],
-                    [InlineKeyboardButton(text="❌ Пока не готова", callback_data="not_ready")]
-                ]
-            )
+            book_keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📝 Да, хочу записаться!", callback_data="book")], [InlineKeyboardButton(text="❌ Пока не готов", callback_data="not_ready")]])
             await message.answer(
                 f"💕 **{PSYCHOLOGIST_NAME}** может помочь тебе разобраться в этом глубже.\n\n"
                 f"Хочешь обсудить это с живым психологом? Это конфиденциально и не обязывает ни к чему.",
                 reply_markup=book_keyboard
             )
         else:
+            if not is_premium(user_id):
+                answer += f"\n\n📊 Осталось вопросов сегодня: {new_remaining}/{FREE_QUESTIONS_PER_DAY}. ⭐ Подписка Premium снимает лимиты!"
             await message.answer(answer)
-        
     except Exception as e:
         print(f"❌ Ошибка ИИ: {e}")
-        await message.answer(
-            "🌙 Извини, произошла небольшая ошибка. Попробуй ещё раз или воспользуйся кнопками меню.",
-            reply_markup=menu_keyboard
-        )
+        await message.answer("🌙 Извини, произошла ошибка. Попробуй ещё раз или используй кнопки меню.", reply_markup=menu_keyboard)
 
-# ========== КОЛБЭКИ ДЛЯ ИНЛАЙН-КНОПОК ==========
 @dp.callback_query(lambda c: c.data == "book")
 async def handle_book(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
     await callback.message.answer(
-        "🌸 **Оставь свой контакт** 🌸\n\n"
-        "Напиши свой Telegram @username или номер телефона.\n"
-        "Психолог Дарья свяжется с тобой в ближайшее время.\n\n"
-        "Или нажми /cancel для отмены.",
+        "🌸 **Оставь свой контакт** 🌸\n\nНапиши свой Telegram @username или номер телефона.\nПсихолог Дарья свяжется с тобой.\n\nИли нажми /cancel для отмены.",
         reply_markup=ReplyKeyboardRemove()
     )
     await state.set_state(Dialogue.waiting_for_contact)
@@ -705,15 +804,13 @@ async def handle_not_ready(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.clear()
     await callback.message.answer(
-        "🌿 Хорошо, я понимаю. Если захочешь поговорить — я всегда здесь.\n\n"
-        "Напиши /start, когда будешь готова 🌸",
+        "🌿 Хорошо, я понимаю. Напиши /start, когда будешь готова 🌸",
         reply_markup=menu_keyboard
     )
     await state.set_state(Dialogue.chatting)
 
-# ========== ЗАПУСК ==========
 async def main():
-    print("✨ Бот с живыми ответами и определением пола запущен! ✨")
+    print("✨ Бот с подпиской, лимитами и всеми функциями запущен! ✨")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
