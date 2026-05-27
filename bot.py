@@ -50,7 +50,7 @@ class Dialogue(StatesGroup):
     waiting_for_birthdate_comp2 = State()
     waiting_for_zodiac = State()
 
-# ========== ГЛАВНОЕ МЕНЮ (КНОПКИ ВСЕГДА ВИДНЫ) ==========
+# ========== ГЛАВНОЕ МЕНЮ ==========
 menu_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="ℹ️ Помощь"), KeyboardButton(text="🗑 Очистить диалог")],
@@ -69,19 +69,32 @@ book_keyboard = InlineKeyboardMarkup(
 )
 
 # ========== ПРАВИЛЬНОЕ ОПРЕДЕЛЕНИЕ ЗНАКОВ ЗОДИАКА ==========
-ZODIAC_SIGNS = [
-    (20, 1, "Козерог"), (19, 2, "Водолей"), (21, 3, "Рыбы"),
-    (20, 4, "Овен"), (21, 5, "Телец"), (21, 6, "Близнецы"),
-    (23, 7, "Рак"), (23, 8, "Лев"), (23, 9, "Дева"),
-    (23, 10, "Весы"), (22, 11, "Скорпион"), (22, 12, "Стрелец")
-]
-
 def get_zodiac_sign(day: int, month: int) -> str:
     """Точное определение знака зодиака"""
-    for d, m, sign in ZODIAC_SIGNS:
-        if (month == m and day <= d) or (month == m - 1 and day >= d):
-            return sign
-    return "Козерог"
+    if (month == 3 and day >= 21) or (month == 4 and day <= 19):
+        return "Овен"
+    elif (month == 4 and day >= 20) or (month == 5 and day <= 20):
+        return "Телец"
+    elif (month == 5 and day >= 21) or (month == 6 and day <= 20):
+        return "Близнецы"
+    elif (month == 6 and day >= 21) or (month == 7 and day <= 22):
+        return "Рак"
+    elif (month == 7 and day >= 23) or (month == 8 and day <= 22):
+        return "Лев"
+    elif (month == 8 and day >= 23) or (month == 9 and day <= 22):
+        return "Дева"
+    elif (month == 9 and day >= 23) or (month == 10 and day <= 22):
+        return "Весы"
+    elif (month == 10 and day >= 23) or (month == 11 and day <= 21):
+        return "Скорпион"
+    elif (month == 11 and day >= 22) or (month == 12 and day <= 21):
+        return "Стрелец"
+    elif (month == 12 and day >= 22) or (month == 1 and day <= 19):
+        return "Козерог"
+    elif (month == 1 and day >= 20) or (month == 2 and day <= 18):
+        return "Водолей"
+    else:
+        return "Рыбы"
 
 # ========== РАСЧЕТ ЧИСЛА СУДЬБЫ ==========
 def calculate_fate_number(birth_date: str) -> tuple:
@@ -114,7 +127,6 @@ def get_compatibility(date1: str, date2: str) -> dict:
         sign1 = get_zodiac_sign(day1, month1)
         sign2 = get_zodiac_sign(day2, month2)
         
-        # Стихии
         elements = {"Овен": "Огонь", "Лев": "Огонь", "Стрелец": "Огонь",
                     "Телец": "Земля", "Дева": "Земля", "Козерог": "Земля",
                     "Близнецы": "Воздух", "Весы": "Воздух", "Водолей": "Воздух",
@@ -189,7 +201,8 @@ async def notify_psychologist(user_id: int, username: str, problem: str, directi
 async def handle_book(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
     await callback.message.answer(
-        "📝 **Оставьте контакт**\n\nНапишите @username или номер телефона.",
+        "📝 **Оставьте контакт**\n\nНапишите @username или номер телефона.\n\n"
+        "Или нажмите ❌ Отмена",
         reply_markup=ReplyKeyboardRemove()
     )
     await state.set_state(Dialogue.waiting_for_contact)
@@ -216,7 +229,7 @@ async def process_contact(message: types.Message, state: FSMContext):
         del user_problems[user_id]
     
     await message.answer(
-        f"✅ Спасибо! Психолог {PSYCHOLOGIST_NAME} свяжется с вами. Берегите себя ❤️",
+        f"✅ Спасибо! Психолог {PSYCHOLOGIST_NAME} свяжется с вами.\n\nБерегите себя ❤️",
         reply_markup=menu_keyboard
     )
     await state.clear()
@@ -247,14 +260,21 @@ async def cmd_start(message: types.Message, state: FSMContext):
     )
     await state.set_state(Dialogue.chatting)
 
-@dp.message(Command("menu"))
-async def show_menu(message: types.Message):
-    await message.answer("📋 Меню:", reply_markup=menu_keyboard)
-
 @dp.message(Command("cancel"))
 async def cmd_cancel(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer("❌ Отменено.", reply_markup=menu_keyboard)
+    await state.set_state(Dialogue.chatting)
+
+@dp.message(Command("reset"))
+async def cmd_reset(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    if user_id in user_history:
+        del user_history[user_id]
+    if user_id in user_problems:
+        del user_problems[user_id]
+    await state.clear()
+    await message.answer("🔄 История очищена.", reply_markup=menu_keyboard)
     await state.set_state(Dialogue.chatting)
 
 @dp.message(F.text == "ℹ️ Помощь")
@@ -441,7 +461,8 @@ async def taro_card_handler(message: types.Message):
 async def book_psychologist(message: types.Message, state: FSMContext):
     await message.answer(
         "📝 **Запись на консультацию**\n\n"
-        "Оставьте ваш контакт (@username или телефон), и я передам его психологу.",
+        "Оставьте ваш контакт (@username или телефон), и я передам его психологу.\n\n"
+        "Или нажмите /cancel для отмены.",
         reply_markup=ReplyKeyboardRemove()
     )
     await state.set_state(Dialogue.waiting_for_contact)
