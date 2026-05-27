@@ -4,7 +4,7 @@ import os
 import re
 import random
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command, StateFilter
@@ -201,6 +201,9 @@ def save_to_google_sheets(user_id: int, username: str, problem: str, direction: 
             print("⚠️ GOOGLE_CREDENTIALS_JSON или SHEET_ID не найдены")
             return False
         
+        # Московское время (UTC+3)
+        moscow_time = datetime.now() + timedelta(hours=3)
+        
         creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
         creds = Credentials.from_service_account_info(
             creds_dict,
@@ -209,14 +212,12 @@ def save_to_google_sheets(user_id: int, username: str, problem: str, direction: 
         client = gspread.authorize(creds)
         sheet = client.open_by_key(SHEET_ID).sheet1
         
-        # Добавляем заголовки, если таблица пустая
         if not sheet.get_all_values():
             headers = ["Timestamp", "User ID", "Username", "Problem", "Direction", "Contact", "Status"]
             sheet.append_row(headers)
         
-        # Добавляем строку с данными
         row = [
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            moscow_time.strftime("%Y-%m-%d %H:%M:%S"),
             user_id,
             username,
             problem[:200],
