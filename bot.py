@@ -1,9 +1,8 @@
 import asyncio
 import logging
 import os
-import json
+import re
 from datetime import datetime
-from typing import Dict, Any
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command, StateFilter
@@ -13,287 +12,294 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
     ReplyKeyboardMarkup, KeyboardButton,
     InlineKeyboardMarkup, InlineKeyboardButton,
-    ReplyKeyboardRemove
+    ReplyKeyboardRemove, URLInputFile
 )
 from dotenv import load_dotenv
-import gspread
-from google.oauth2.service_account import Credentials
-from openai import AsyncOpenAI
 
-# ========== ЗАГРУЗКА ПЕРЕМЕННЫХ ==========
+from numerology import NumerologyCalculator
+
+# === ЗАГРУЗКА ПЕРЕМЕННЫХ ===
 load_dotenv()
-
-# КЛЮЧ ВШИТ ПРЯМО В КОД (ВРЕМЕННО, ДЛЯ ТЕСТА)
-GROQ_API_KEY = "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"
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_IDS = [int(id.strip()) for id in os.getenv("ADMIN_IDS", "").split(",") if id.strip()]
-PSYCHOLOGIST_ID = int(os.getenv("PSYCHOLOGIST_ID", 0))
-SHEET_ID = os.getenv("SHEET_ID")
-GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")  # Для будущего использования
 
-# Диагностика в логах
-print(f"🔑 GROQ_API_KEY (первые 20 символов): {GROQ_API_KEY[:20]}...")
-print(f"🔑 BOT_TOKEN: {'✅ НАЙДЕН' if BOT_TOKEN else '❌ НЕ НАЙДЕН'}")
-print(f"👤 PSYCHOLOGIST_ID: {PSYCHOLOGIST_ID}")
-
-if not GROQ_API_KEY:
-    raise ValueError("GROQ_API_KEY не найден")
 if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN не найден")
+    raise ValueError("BOT_TOKEN не найден в .env")
 
-# ========== ИНИЦИАЛИЗАЦИЯ GROQ ==========
-groq_client = AsyncOpenAI(
-    api_key=GROQ_API_KEY,
-    base_url="https://api.groq.com/openai/v1"
-)
-
-# Данные психолога
-PSYCHOLOGIST_NAME = "Дарья"
-
-logging.basicConfig(level=logging.INFO)
-
+# === ИНИЦИАЛИЗАЦИЯ БОТА ===
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-# --- Состояния ---
-class Dialogue(StatesGroup):
-    chatting = State()
-    waiting_for_contact = State()
-
-# --- Кнопки меню ---
+# === КНОПКИ МЕНЮ ===
 menu_keyboard = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="ℹ️ Помощь")],
-        [KeyboardButton(text="🗑 Очистить диалог"), KeyboardButton(text="❌ Отмена")]
+        [KeyboardButton(text="ℹ️ Помощь"), KeyboardButton(text="🗑 Очистить диалог")],
+        [KeyboardButton(text="❌ Отмена"), KeyboardButton(text="🔮 Число судьбы")],
+        [KeyboardButton(text="⭐ Гороскоп"), KeyboardButton(text="♊ Совместимость")],
+        [KeyboardButton(text="🎴 Карта дня Таро"), KeyboardButton(text="📞 Запись к психологу")]
     ],
     resize_keyboard=True
 )
 
-# --- Кнопка записи ---
-book_keyboard = InlineKeyboardMarkup(
-    inline_keyboard=[
-        [InlineKeyboardButton(text="📝 Записаться к Дарье", callback_data="book")],
-        [InlineKeyboardButton(text="❌ Пока не готов", callback_data="not_ready")]
-    ]
-)
+# === СОСТОЯНИЯ FSM ===
+class Dialogue(StatesGroup):
+    chatting = State()
+    waiting_for_contact = State()
+    waiting_for_birthdate = State()
+    waiting_for_birthdate_comp = State()
+    waiting_for_birthdate_comp2 = State()
+    waiting_for_forecast_period = State()
+    waiting_for_zodiac = State()
 
-# --- Системный промпт ---
-SYSTEM_PROMPT = f"""Ты — эмпатичный помощник-психолог по имени {PSYCHOLOGIST_NAME}.
+# === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ===
+def is_valid_date(date_str: str) -> bool:
+    """Проверка формата даты ДД.ММ.ГГГГ"""
+    return bool(re.match(r'^\d{2}\.\d{2}\.\d{4}$', date_str))
 
-Правила:
-1. Внимательно слушай и задавай вопросы.
-2. Проявляй эмпатию.
-3. Не ставь диагнозы.
-4. При кризисе — дай телефон доверия.
-5. После 4-6 обменов предложи записаться к живому психологу.
-6. В конце сообщения с предложением записи добавь фразу: "ЗАПИСЬ_ГОТОВА"
-
-Отвечай коротко (2-4 предложения) на русском."""
-
-# --- Хранилище ---
-user_history = {}
-user_problems = {}
-
-def get_history(user_id: int):
-    if user_id not in user_history:
-        user_history[user_id] = [{"role": "system", "content": SYSTEM_PROMPT}]
-    return user_history[user_id]
-
-def detect_direction(text: str) -> str:
-    text_lower = text.lower()
-    keywords = {
-        "тревога": ["тревог", "страх", "паник"],
-        "отношения": ["отношени", "партнёр", "ссор"],
-        "выгорание": ["выгоран", "устал", "нет сил"],
-        "самооценка": ["самооценк", "неуверен"],
-        "дети": ["ребёнк", "дочь", "сын"]
-    }
-    for direction, words in keywords.items():
-        for word in words:
-            if word in text_lower:
-                return direction
-    return "общая поддержка"
-
-# --- Google Sheets ---
-def get_sheet():
-    try:
-        creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
-        creds = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets"])
-        client = gspread.authorize(creds)
-        return client.open_by_key(SHEET_ID).sheet1
-    except Exception as e:
-        logging.error(f"Ошибка Google Sheets: {e}")
-        return None
-
-def save_to_sheet(user_id: int, username: str, problem: str, direction: str, contact: str):
-    sheet = get_sheet()
-    if not sheet:
-        return False
-    try:
-        if not sheet.get_all_values():
-            headers = ["Timestamp", "User ID", "Username", "Problem", "Direction", "Contact", "Status"]
-            sheet.append_row(headers)
-        row = [datetime.now().strftime("%Y-%m-%d %H:%M:%S"), user_id, username, problem[:200], direction, contact, "new"]
-        sheet.append_row(row)
-        return True
-    except Exception as e:
-        logging.error(f"Ошибка сохранения: {e}")
-        return False
-
-# --- Уведомление психологу ---
-async def notify_psychologist(user_id: int, username: str, problem: str, direction: str, contact: str):
-    message = (
-        f"🔔 **НОВЫЙ ЗАПРОС**\n\n"
-        f"👤 {username} (ID: {user_id})\n"
-        f"📝 {problem[:300]}\n"
-        f"🏷 {direction}\n"
-        f"📞 {contact}"
-    )
-    if PSYCHOLOGIST_ID:
-        try:
-            await bot.send_message(PSYCHOLOGIST_ID, message, parse_mode="Markdown")
-        except Exception as e:
-            logging.error(f"Ошибка: {e}")
-
-# --- Обработчики ---
-@dp.callback_query(lambda c: c.data == "book")
-async def handle_book(callback: types.CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await callback.message.answer(
-        "📝 **Оставь контакт**\n\nНапиши @username или номер телефона.",
-        reply_markup=ReplyKeyboardRemove()
-    )
-    await state.set_state(Dialogue.waiting_for_contact)
-
-@dp.callback_query(lambda c: c.data == "not_ready")
-async def handle_not_ready(callback: types.CallbackQuery):
-    await callback.answer()
-    await callback.message.answer("Хорошо, я здесь если захочешь поговорить. Напиши /start", reply_markup=menu_keyboard)
-
-@dp.message(StateFilter(Dialogue.waiting_for_contact))
-async def process_contact(message: types.Message, state: FSMContext):
-    contact = message.text
-    user_id = message.from_user.id
-    username = message.from_user.username or "None"
-    problem_info = user_problems.get(user_id, {"problem": "Диалог с ИИ", "direction": "не определено"})
-    
-    save_to_sheet(user_id, username, problem_info["problem"], problem_info["direction"], contact)
-    await notify_psychologist(user_id, username, problem_info["problem"], problem_info["direction"], contact)
-    
-    if user_id in user_history:
-        del user_history[user_id]
-    if user_id in user_problems:
-        del user_problems[user_id]
-    
-    await message.answer(f"✅ Спасибо! Психолог {PSYCHOLOGIST_NAME} свяжется с вами в течение 24 часов. Берегите себя ❤️", reply_markup=menu_keyboard)
-    await state.clear()
-
-# --- Команды ---
+# === ОБРАБОТЧИКИ КОМАНД И КНОПОК ===
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
-    user_id = message.from_user.id
     await state.clear()
-    if user_id in user_history:
-        del user_history[user_id]
-    if user_id in user_problems:
-        del user_problems[user_id]
-    
     await message.answer(
-        f"👋 **Привет! Я помощник психолога {PSYCHOLOGIST_NAME}.**\n\nРасскажи, что тебя беспокоит.",
+        "✨ **Приветствую в эзотерическом центре!** ✨\n\n"
+        "Я помогу вам узнать число судьбы, совместимость, сделать нумерологический прогноз, "
+        "получить карту Таро с изображением и многое другое.\n\n"
+        "Используйте кнопки меню или команды:\n"
+        "/help - помощь\n"
+        "/cancel - отмена",
         reply_markup=menu_keyboard,
         parse_mode="Markdown"
     )
-    await state.set_state(Dialogue.chatting)
 
-@dp.message(Command("reset"))
-async def cmd_reset(message: types.Message, state: FSMContext):
-    user_id = message.from_user.id
-    if user_id in user_history:
-        del user_history[user_id]
-    if user_id in user_problems:
-        del user_problems[user_id]
-    await message.answer("🔄 История очищена.", reply_markup=menu_keyboard)
+@dp.message(Command("help"))
+async def cmd_help(message: types.Message):
+    help_text = (
+        "📖 **Доступные функции:**\n\n"
+        "🔮 **Число судьбы** - расчет по дате рождения\n"
+        "⭐ **Гороскоп** - астрологический прогноз на сегодня\n"
+        "♊ **Совместимость** - анализ пары по датам\n"
+        "🎴 **Карта дня Таро** - карта с изображением и значением\n"
+        "📞 **Запись к психологу** - оставьте контакт\n\n"
+        "🗑 **Очистить диалог** / ❌ **Отмена**"
+    )
+    await message.answer(help_text, parse_mode="Markdown")
 
 @dp.message(Command("cancel"))
 async def cmd_cancel(message: types.Message, state: FSMContext):
     await state.clear()
-    await message.answer("❌ Отменено.", reply_markup=menu_keyboard)
+    await message.answer("❌ Действие отменено.", reply_markup=menu_keyboard)
 
+# === 1. ЧИСЛО СУДЬБЫ (НУМЕРОЛОГИЯ) ===
+@dp.message(F.text == "🔮 Число судьбы")
+async def fate_number_start(message: types.Message, state: FSMContext):
+    await message.answer(
+        "🔮 **Расчет числа судьбы**\n\n"
+        "Введите вашу дату рождения в формате:\n`ДД.ММ.ГГГГ`\n"
+        "Пример: `15.05.1990`",
+        parse_mode="Markdown"
+    )
+    await state.set_state(Dialogue.waiting_for_birthdate)
+
+@dp.message(StateFilter(Dialogue.waiting_for_birthdate))
+async def process_fate_number(message: types.Message, state: FSMContext):
+    if not is_valid_date(message.text):
+        await message.answer("❌ Неверный формат. Введите как `ДД.ММ.ГГГГ`")
+        return
+    
+    number, description = NumerologyCalculator.calculate_fate_number(message.text)
+    # Персональный прогноз на день
+    daily_forecast = NumerologyCalculator.get_personal_forecast(message.text, "day")
+    
+    await message.answer(
+        f"🔮 **Ваше число судьбы: {number}**\n\n{description}\n\n"
+        f"📅 **Прогноз на сегодня:** {daily_forecast}\n\n"
+        f"✨ Это число раскрывает ваши врожденные таланты и жизненный путь.",
+        parse_mode="Markdown"
+    )
+    await state.clear()
+
+# === 2. ГОРОСКОП (УПРОЩЕННЫЙ) ===
+@dp.message(F.text == "⭐ Гороскоп")
+async def horoscope_start(message: types.Message, state: FSMContext):
+    await message.answer(
+        "⭐ **Астрологический гороскоп**\n\n"
+        "Введите ваш знак зодиака или дату рождения:\n"
+        "Овен, Телец, Близнецы, Рак, Лев, Дева, Весы, Скорпион, Стрелец, Козерог, Водолей, Рыбы\n\n"
+        "Или отправьте дату в формате `ДД.ММ.ГГГГ`",
+        parse_mode="Markdown"
+    )
+    await state.set_state(Dialogue.waiting_for_zodiac)
+
+@dp.message(StateFilter(Dialogue.waiting_for_zodiac))
+async def process_horoscope(message: types.Message, state: FSMContext):
+    text = message.text.strip()
+    zodiac_sign = None
+    
+    if is_valid_date(text):
+        day, month, _ = map(int, text.split('.'))
+        # Простейшее определение знака (упрощенно)
+        if (month == 3 and day >= 21) or (month == 4 and day <= 19): zodiac_sign = "Овен"
+        elif (month == 4 and day >= 20) or (month == 5 and day <= 20): zodiac_sign = "Телец"
+        elif (month == 5 and day >= 21) or (month == 6 and day <= 20): zodiac_sign = "Близнецы"
+        elif (month == 6 and day >= 21) or (month == 7 and day <= 22): zodiac_sign = "Рак"
+        elif (month == 7 and day >= 23) or (month == 8 and day <= 22): zodiac_sign = "Лев"
+        elif (month == 8 and day >= 23) or (month == 9 and day <= 22): zodiac_sign = "Дева"
+        elif (month == 9 and day >= 23) or (month == 10 and day <= 22): zodiac_sign = "Весы"
+        elif (month == 10 and day >= 23) or (month == 11 and day <= 21): zodiac_sign = "Скорпион"
+        elif (month == 11 and day >= 22) or (month == 12 and day <= 21): zodiac_sign = "Стрелец"
+        elif (month == 12 and day >= 22) or (month == 1 and day <= 19): zodiac_sign = "Козерог"
+        elif (month == 1 and day >= 20) or (month == 2 and day <= 18): zodiac_sign = "Водолей"
+        else: zodiac_sign = "Рыбы"
+        await message.answer(f"♈ Ваш знак: **{zodiac_sign}**")
+    else:
+        # Простейшая проверка ввода знака
+        known = ["овен","телец","близнецы","рак","лев","дева","весы","скорпион","стрелец","козерог","водолей","рыбы"]
+        if text.lower() in known:
+            zodiac_sign = text.capitalize()
+        else:
+            await message.answer("❌ Неизвестный знак или неверная дата. Попробуйте еще раз.")
+            return
+    
+    # Простой гороскоп-заготовка (можно позже заменить на LLM)
+    forecasts = {
+        "Овен": "🔥 Энергия бьет ключом! Начните новые дела, ваша инициатива принесет плоды.",
+        "Телец": "💰 Хороший день для финансовых решений. Не торопитесь с тратами, планируйте бюджет.",
+        "Близнецы": "💬 День общения и новых знакомств. Полезная информация придет через друзей.",
+        "Рак": "🏠 День интуиции и семьи. Займитесь домом, уделите время близким.",
+        "Лев": "🎭 Творческий день. Покажите себя, ваши таланты будут замечены.",
+        "Дева": "📋 День порядка и планирования. Систематизируйте дела, завершите начатое.",
+        "Весы": "⚖️ День гармонии. Избегайте конфликтов, ищите компромиссы.",
+        "Скорпион": "🦂 День трансформации. Глубокие размышления помогут найти решение.",
+        "Стрелец": "✈️ День приключений и оптимизма. Расширяйте горизонты!",
+        "Козерог": "🏔️ День достижений. Работайте над целями, будьте упорны.",
+        "Водолей": "💡 День идей и нестандартных решений. Делитесь мыслями!",
+        "Рыбы": "🎨 День творчества и интуиции. Займитесь искусством, слушайте сердце."
+    }
+    forecast = forecasts.get(zodiac_sign, "🌟 Гармоничный день. Доверьтесь своей интуиции.")
+    await message.answer(f"✨ **Гороскоп для {zodiac_sign}** ✨\n\n📅 **Сегодня:** {forecast}", parse_mode="Markdown")
+    await state.clear()
+
+# === 3. СОВМЕСТИМОСТЬ ===
+compatibility_data = {}
+@dp.message(F.text == "♊ Совместимость")
+async def compatibility_start(message: types.Message, state: FSMContext):
+    await message.answer(
+        "♊ **Расчет совместимости**\n\nВведите **первую** дату рождения (вашу):\n`ДД.ММ.ГГГГ`",
+        parse_mode="Markdown"
+    )
+    await state.set_state(Dialogue.waiting_for_birthdate_comp)
+
+@dp.message(StateFilter(Dialogue.waiting_for_birthdate_comp))
+async def process_compatibility_first(message: types.Message, state: FSMContext):
+    if not is_valid_date(message.text):
+        await message.answer("❌ Неверный формат. Введите как `ДД.ММ.ГГГГ`")
+        return
+    compatibility_data['date1'] = message.text
+    await message.answer(
+        "♊ **Расчет совместимости**\n\nВведите **вторую** дату рождения (партнера):\n`ДД.ММ.ГГГГ`",
+        parse_mode="Markdown"
+    )
+    await state.set_state(Dialogue.waiting_for_birthdate_comp2)
+
+@dp.message(StateFilter(Dialogue.waiting_for_birthdate_comp2))
+async def process_compatibility_second(message: types.Message, state: FSMContext):
+    if not is_valid_date(message.text):
+        await message.answer("❌ Неверный формат. Введите как `ДД.ММ.ГГГГ`")
+        return
+    date1 = compatibility_data.get('date1')
+    if not date1:
+        await message.answer("❌ Ошибка. Начните заново командой /start")
+        await state.clear()
+        return
+    
+    result = NumerologyCalculator.get_compatibility(date1, message.text)
+    if result['compatibility_percent'] == 0:
+        await message.answer("❌ Ошибка расчета. Проверьте даты.")
+    else:
+        await message.answer(
+            f"♊ **Совместимость**\n\n"
+            f"📅 Дата 1: {date1} ({result['sign1']}, число {result['number1']})\n"
+            f"📅 Дата 2: {message.text} ({result['sign2']}, число {result['number2']})\n\n"
+            f"💕 **Совместимость: {result['compatibility_percent']}%**\n{result['text']}",
+            parse_mode="Markdown"
+        )
+    compatibility_data.clear()
+    await state.clear()
+
+# === 4. КАРТА ДНЯ ТАРО С ИЗОБРАЖЕНИЕМ ===
+@dp.message(F.text == "🎴 Карта дня Таро")
+async def taro_card_handler(message: types.Message):
+    await message.answer("🎴 Вытягиваю карту дня... Подождите немного.")
+    try:
+        name, image_url, meaning = await NumerologyCalculator.get_taro_card_with_image()
+        if image_url:
+            # Отправляем картинку через URL (Telegram сам скачает и отправит)
+            await message.answer_photo(
+                photo=URLInputFile(image_url),
+                caption=f"🎴 **Карта дня: {name}**\n\n{meaning}\n\n✨ Энергия этой карты будет сопровождать вас сегодня.",
+                parse_mode="Markdown"
+            )
+        else:
+            # Если картинки нет, отправляем просто текст
+            await message.answer(
+                f"🎴 **Карта дня: {name}**\n\n{meaning}\n\n✨ Энергия этой карты будет сопровождать вас сегодня.",
+                parse_mode="Markdown"
+            )
+    except Exception as e:
+        print(f"Ошибка при отправке карты Таро: {e}")
+        # Резервный вариант из локального словаря
+        name, _, meaning = NumerologyCalculator.get_taro_card_local()
+        await message.answer(
+            f"🎴 **Карта дня: {name}**\n\n{meaning}\n\n✨ Прислушайтесь к её посланию.",
+            parse_mode="Markdown"
+        )
+
+# === ЗАПИСЬ К ПСИХОЛОГУ ===
+@dp.message(F.text == "📞 Запись к психологу")
+async def book_psychologist_start(message: types.Message, state: FSMContext):
+    await message.answer(
+        "📝 **Запись на консультацию**\n\n"
+        "Оставьте ваш контакт (@username или номер телефона), и наш специалист свяжется с вами в ближайшее время.",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    await state.set_state(Dialogue.waiting_for_contact)
+
+@dp.message(StateFilter(Dialogue.waiting_for_contact))
+async def process_booking(message: types.Message, state: FSMContext):
+    contact = message.text
+    await message.answer(
+        f"✅ Спасибо! Психолог свяжется с вами в течение 24 часов.\n\nБерегите себя ❤️",
+        reply_markup=menu_keyboard
+    )
+    await state.clear()
+
+# === ОСТАЛЬНЫЕ КНОПКИ МЕНЮ ===
 @dp.message(F.text == "ℹ️ Помощь")
 async def menu_help(message: types.Message):
-    await message.answer("📋 /start - начать\n/reset - очистить\n/cancel - отменить\n\nПросто расскажи, что тебя беспокоит.")
+    await cmd_help(message)
 
 @dp.message(F.text == "🗑 Очистить диалог")
 async def menu_reset(message: types.Message, state: FSMContext):
-    user_id = message.from_user.id
-    if user_id in user_history:
-        del user_history[user_id]
-    if user_id in user_problems:
-        del user_problems[user_id]
-    await message.answer("🗑 История очищена.", reply_markup=menu_keyboard)
+    await state.clear()
+    await message.answer("🗑 История и состояния очищены.", reply_markup=menu_keyboard)
 
 @dp.message(F.text == "❌ Отмена")
 async def menu_cancel(message: types.Message, state: FSMContext):
-    current_state = await state.get_state()
-    if current_state == Dialogue.waiting_for_contact:
-        await state.clear()
-        await message.answer("❌ Запись отменена.", reply_markup=menu_keyboard)
-    else:
-        await message.answer("❌ Нет активных действий.", reply_markup=menu_keyboard)
+    await state.clear()
+    await message.answer("❌ Действие отменено.", reply_markup=menu_keyboard)
 
-# --- Основной диалог ---
-@dp.message(Dialogue.chatting)
-async def chat_with_ai(message: types.Message, state: FSMContext):
-    user_id = message.from_user.id
-    user_text = message.text
-    
-    if user_text in ["ℹ️ Помощь", "🗑 Очистить диалог", "❌ Отмена"]:
-        return
-    
-    # Кризисная проверка
-    crisis = ["суицид", "самоубийств", "не хочу жить"]
-    if any(word in user_text.lower() for word in crisis):
-        await message.answer("🚨 Телефон доверия: 8-800-2000-122. Пожалуйста, позвоните ❤️")
-        return
-    
-    if user_id not in user_problems:
-        user_problems[user_id] = {"problem": user_text, "direction": detect_direction(user_text)}
-    
-    try:
-        history = get_history(user_id)
-        history.append({"role": "user", "content": user_text})
-        
-        response = await groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=history,
-            max_tokens=350,
-            temperature=0.8
-        )
-        
-        answer = response.choices[0].message.content
-        history.append({"role": "assistant", "content": answer})
-        
-        if len(history) > 15:
-            user_history[user_id] = [history[0]] + history[-12:]
-        else:
-            user_history[user_id] = history
-        
-        if "ЗАПИСЬ_ГОТОВА" in answer:
-            answer = answer.replace("ЗАПИСЬ_ГОТОВА", "").strip()
-            if answer:
-                await message.answer(answer)
-            await message.answer(f"💬 Хотите обсудить это с психологом {PSYCHOLOGIST_NAME}?", reply_markup=book_keyboard)
-        else:
-            await message.answer(answer)
-        
-    except Exception as e:
-        print(f"Ошибка: {e}")
-        await message.answer("Ошибка. Попробуйте позже.")
+# === ОБРАБОТЧИК ТЕКСТОВЫХ СООБЩЕНИЙ (ЕСЛИ НЕТ КОМАНДЫ) ===
+@dp.message()
+async def echo(message: types.Message):
+    await message.answer(
+        "Я вас не понял. Пожалуйста, используйте кнопки меню или команду /help.",
+        reply_markup=menu_keyboard
+    )
 
-# --- Запуск ---
+# === ЗАПУСК БОТА ===
 async def main():
-    print("🚀 Бот запускается...")
+    print("🚀 Бот с нумерологией, гороскопом и картами Таро запущен!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
