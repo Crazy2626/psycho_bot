@@ -22,26 +22,32 @@ from openai import AsyncOpenAI
 
 # ========== ЗАГРУЗКА ПЕРЕМЕННЫХ ==========
 load_dotenv()
-print(f"DEBUG: GROQ_API_KEY = {os.getenv('GROQ_API_KEY')}")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+# КЛЮЧ ВШИТ ПРЯМО В КОД (ВРЕМЕННО, ДЛЯ ТЕСТА)
+GROQ_API_KEY = "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"
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = [int(id.strip()) for id in os.getenv("ADMIN_IDS", "").split(",") if id.strip()]
 PSYCHOLOGIST_ID = int(os.getenv("PSYCHOLOGIST_ID", 0))
 SHEET_ID = os.getenv("SHEET_ID")
 GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
 
-# Проверка
+# Диагностика в логах
+print(f"🔑 GROQ_API_KEY (первые 20 символов): {GROQ_API_KEY[:20]}...")
+print(f"🔑 BOT_TOKEN: {'✅ НАЙДЕН' if BOT_TOKEN else '❌ НЕ НАЙДЕН'}")
+print(f"👤 PSYCHOLOGIST_ID: {PSYCHOLOGIST_ID}")
+
 if not GROQ_API_KEY:
     raise ValueError("GROQ_API_KEY не найден")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не найден")
 
-# ========== ИНИЦИАЛИЗАЦИЯ ==========
+# ========== ИНИЦИАЛИЗАЦИЯ GROQ ==========
 groq_client = AsyncOpenAI(
     api_key=GROQ_API_KEY,
     base_url="https://api.groq.com/openai/v1"
 )
 
+# Данные психолога
 PSYCHOLOGIST_NAME = "Дарья"
 
 logging.basicConfig(level=logging.INFO)
