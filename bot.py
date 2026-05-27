@@ -61,13 +61,6 @@ menu_keyboard = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-book_keyboard = InlineKeyboardMarkup(
-    inline_keyboard=[
-        [InlineKeyboardButton(text="📝 Записаться", callback_data="book")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="not_ready")]
-    ]
-)
-
 # ========== ПРАВИЛЬНОЕ ОПРЕДЕЛЕНИЕ ЗНАКОВ ЗОДИАКА ==========
 def get_zodiac_sign(day: int, month: int) -> str:
     """Точное определение знака зодиака"""
@@ -139,6 +132,7 @@ def get_compatibility(date1: str, date2: str) -> dict:
         sign1 = get_zodiac_sign(day1, month1)
         sign2 = get_zodiac_sign(day2, month2)
         
+        # Стихии
         elements = {"Овен": "Огонь", "Лев": "Огонь", "Стрелец": "Огонь",
                     "Телец": "Земля", "Дева": "Земля", "Козерог": "Земля",
                     "Близнецы": "Воздух", "Весы": "Воздух", "Водолей": "Воздух",
@@ -160,7 +154,7 @@ def get_compatibility(date1: str, date2: str) -> dict:
         
         return {"percent": compatibility, "text": text, "sign1": sign1, "sign2": sign2}
     except:
-        return {"percent": 0, "text": "Ошибка"}
+        return {"percent": 0, "text": "Ошибка формата даты"}
 
 # ========== ХРАНИЛИЩЕ ==========
 user_history = {}
@@ -207,48 +201,7 @@ async def notify_psychologist(user_id: int, username: str, problem: str, directi
         except Exception as e:
             logging.error(f"Ошибка: {e}")
 
-# ========== ОБРАБОТЧИКИ ==========
-
-@dp.callback_query(lambda c: c.data == "book")
-async def handle_book(callback: types.CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await callback.message.answer(
-        "📝 **Оставьте контакт**\n\nНапишите @username или номер телефона.\n\n"
-        "Или нажмите ❌ Отмена",
-        reply_markup=ReplyKeyboardRemove()
-    )
-    await state.set_state(Dialogue.waiting_for_contact)
-
-@dp.callback_query(lambda c: c.data == "not_ready")
-async def handle_not_ready(callback: types.CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await state.clear()
-    await callback.message.answer("❌ Отменено.", reply_markup=menu_keyboard)
-    await state.set_state(Dialogue.chatting)
-
-@dp.message(StateFilter(Dialogue.waiting_for_contact))
-async def process_contact(message: types.Message, state: FSMContext):
-    contact = message.text
-    user_id = message.from_user.id
-    username = message.from_user.username or "None"
-    problem_info = user_problems.get(user_id, {"problem": "Диалог с ИИ", "direction": "не определено"})
-    
-    await notify_psychologist(user_id, username, problem_info["problem"], problem_info["direction"], contact)
-    
-    if user_id in user_history:
-        del user_history[user_id]
-    if user_id in user_problems:
-        del user_problems[user_id]
-    
-    await message.answer(
-        f"✅ Спасибо! Психолог {PSYCHOLOGIST_NAME} свяжется с вами.\n\nБерегите себя ❤️",
-        reply_markup=menu_keyboard
-    )
-    await state.clear()
-    await state.set_state(Dialogue.chatting)
-
-# ========== КОМАНДЫ И КНОПКИ МЕНЮ ==========
-
+# ========== ОСНОВНЫЕ ОБРАБОТЧИКИ ==========
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
@@ -289,6 +242,7 @@ async def cmd_reset(message: types.Message, state: FSMContext):
     await message.answer("🔄 История очищена.", reply_markup=menu_keyboard)
     await state.set_state(Dialogue.chatting)
 
+# ========== КНОПКИ МЕНЮ ==========
 @dp.message(F.text == "ℹ️ Помощь")
 async def menu_help(message: types.Message):
     await message.answer(
@@ -323,20 +277,6 @@ async def fate_number_start(message: types.Message, state: FSMContext):
         parse_mode="Markdown"
     )
 
-@dp.message(StateFilter(Dialogue.waiting_for_birthdate))
-async def process_fate_number(message: types.Message, state: FSMContext):
-    if not re.match(r'^\d{2}\.\d{2}\.\d{4}$', message.text):
-        await message.answer("❌ Неверный формат. Введите как `ДД.ММ.ГГГГ`", reply_markup=menu_keyboard)
-        return
-    
-    number, description = calculate_fate_number(message.text)
-    await message.answer(
-        f"🔮 **Ваше число судьбы: {number}**\n\n{description}",
-        parse_mode="Markdown",
-        reply_markup=menu_keyboard
-    )
-    await state.set_state(Dialogue.chatting)
-
 @dp.message(F.text == "⭐ Гороскоп")
 async def horoscope_start(message: types.Message, state: FSMContext):
     await state.set_state(Dialogue.waiting_for_zodiac)
@@ -347,47 +287,6 @@ async def horoscope_start(message: types.Message, state: FSMContext):
         parse_mode="Markdown"
     )
 
-@dp.message(StateFilter(Dialogue.waiting_for_zodiac))
-async def process_horoscope(message: types.Message, state: FSMContext):
-    text = message.text.strip()
-    zodiac_sign = None
-    
-    if re.match(r'^\d{2}\.\d{2}\.\d{4}$', text):
-        day, month, _ = map(int, text.split('.'))
-        zodiac_sign = get_zodiac_sign(day, month)
-        await message.answer(f"♈ Ваш знак: **{zodiac_sign}**")
-    else:
-        known = ["овен","телец","близнецы","рак","лев","дева","весы","скорпион","стрелец","козерог","водолей","рыбы"]
-        for sign in known:
-            if text.lower() == sign:
-                zodiac_sign = sign.capitalize()
-                break
-        if not zodiac_sign:
-            await message.answer("❌ Неизвестный знак. Попробуйте еще раз.", reply_markup=menu_keyboard)
-            return
-    
-    forecasts = {
-        "Овен": "🔥 Энергия бьет ключом! Начните новые дела!",
-        "Телец": "💰 Хороший день для финансовых решений.",
-        "Близнецы": "💬 День общения и новых знакомств.",
-        "Рак": "🏠 День интуиции и семьи.",
-        "Лев": "🎭 Творческий день. Покажите себя!",
-        "Дева": "📋 День порядка и планирования.",
-        "Весы": "⚖️ День гармонии. Избегайте конфликтов.",
-        "Скорпион": "🦂 День трансформации и глубоких мыслей.",
-        "Стрелец": "✈️ День приключений и оптимизма.",
-        "Козерог": "🏔️ День достижений. Будьте упорны.",
-        "Водолей": "💡 День идей и нестандартных решений.",
-        "Рыбы": "🎨 День творчества и интуиции."
-    }
-    forecast = forecasts.get(zodiac_sign, "🌟 Гармоничный день.")
-    await message.answer(
-        f"✨ **Гороскоп для {zodiac_sign}** ✨\n\n📅 {forecast}",
-        parse_mode="Markdown",
-        reply_markup=menu_keyboard
-    )
-    await state.set_state(Dialogue.chatting)
-
 @dp.message(F.text == "♊ Совместимость")
 async def compatibility_start(message: types.Message, state: FSMContext):
     await state.set_state(Dialogue.waiting_for_birthdate_comp)
@@ -396,42 +295,6 @@ async def compatibility_start(message: types.Message, state: FSMContext):
         parse_mode="Markdown"
     )
 
-@dp.message(StateFilter(Dialogue.waiting_for_birthdate_comp))
-async def process_compatibility_first(message: types.Message, state: FSMContext):
-    if not re.match(r'^\d{2}\.\d{2}\.\d{4}$', message.text):
-        await message.answer("❌ Неверный формат. Введите как `ДД.ММ.ГГГГ`")
-        return
-    await state.update_data(date1=message.text)
-    await state.set_state(Dialogue.waiting_for_birthdate_comp2)
-    await message.answer("Введите **вторую** дату рождения:\n`ДД.ММ.ГГГГ`", parse_mode="Markdown")
-
-@dp.message(StateFilter(Dialogue.waiting_for_birthdate_comp2))
-async def process_compatibility_second(message: types.Message, state: FSMContext):
-    if not re.match(r'^\d{2}\.\d{2}\.\d{4}$', message.text):
-        await message.answer("❌ Неверный формат. Введите как `ДД.ММ.ГГГГ`")
-        return
-    
-    data = await state.get_data()
-    date1 = data.get('date1')
-    if not date1:
-        await message.answer("❌ Ошибка. Начните заново.", reply_markup=menu_keyboard)
-        await state.clear()
-        return
-    
-    result = get_compatibility(date1, message.text)
-    if result['percent'] == 0:
-        await message.answer("❌ Ошибка расчета. Проверьте даты.", reply_markup=menu_keyboard)
-    else:
-        await message.answer(
-            f"♊ **Совместимость**\n\n"
-            f"📅 {date1} ({result['sign1']}) и {message.text} ({result['sign2']})\n\n"
-            f"💕 **{result['percent']}%**\n{result['text']}",
-            parse_mode="Markdown",
-            reply_markup=menu_keyboard
-        )
-    await state.set_state(Dialogue.chatting)
-
-# ========== КАРТЫ ТАРО (ТОЛЬКО ТЕКСТ, БЕЗ ОШИБОК) ==========
 @dp.message(F.text == "🎴 Карта дня Таро")
 async def taro_card_handler(message: types.Message):
     taro_cards = {
@@ -478,6 +341,119 @@ async def book_psychologist(message: types.Message, state: FSMContext):
         reply_markup=ReplyKeyboardRemove()
     )
     await state.set_state(Dialogue.waiting_for_contact)
+
+# ========== ВВОД ДАННЫХ ДЛЯ РАСЧЕТОВ ==========
+@dp.message(StateFilter(Dialogue.waiting_for_birthdate))
+async def process_fate_number(message: types.Message, state: FSMContext):
+    if not re.match(r'^\d{2}\.\d{2}\.\d{4}$', message.text):
+        await message.answer("❌ Неверный формат. Введите как `ДД.ММ.ГГГГ`", reply_markup=menu_keyboard)
+        return
+    
+    number, description = calculate_fate_number(message.text)
+    await message.answer(
+        f"🔮 **Ваше число судьбы: {number}**\n\n{description}",
+        parse_mode="Markdown",
+        reply_markup=menu_keyboard
+    )
+    await state.set_state(Dialogue.chatting)
+
+@dp.message(StateFilter(Dialogue.waiting_for_zodiac))
+async def process_horoscope(message: types.Message, state: FSMContext):
+    text = message.text.strip()
+    zodiac_sign = None
+    
+    if re.match(r'^\d{2}\.\d{2}\.\d{4}$', text):
+        day, month, _ = map(int, text.split('.'))
+        zodiac_sign = get_zodiac_sign(day, month)
+        await message.answer(f"♈ Ваш знак: **{zodiac_sign}**")
+    else:
+        known = ["овен","телец","близнецы","рак","лев","дева","весы","скорпион","стрелец","козерог","водолей","рыбы"]
+        for sign in known:
+            if text.lower() == sign:
+                zodiac_sign = sign.capitalize()
+                break
+        if not zodiac_sign:
+            await message.answer("❌ Неизвестный знак. Попробуйте еще раз.", reply_markup=menu_keyboard)
+            return
+    
+    forecasts = {
+        "Овен": "🔥 Энергия бьет ключом! Начните новые дела!",
+        "Телец": "💰 Хороший день для финансовых решений.",
+        "Близнецы": "💬 День общения и новых знакомств.",
+        "Рак": "🏠 День интуиции и семьи.",
+        "Лев": "🎭 Творческий день. Покажите себя!",
+        "Дева": "📋 День порядка и планирования.",
+        "Весы": "⚖️ День гармонии. Избегайте конфликтов.",
+        "Скорпион": "🦂 День трансформации и глубоких мыслей.",
+        "Стрелец": "✈️ День приключений и оптимизма.",
+        "Козерог": "🏔️ День достижений. Будьте упорны.",
+        "Водолей": "💡 День идей и нестандартных решений.",
+        "Рыбы": "🎨 День творчества и интуиции."
+    }
+    forecast = forecasts.get(zodiac_sign, "🌟 Гармоничный день.")
+    await message.answer(
+        f"✨ **Гороскоп для {zodiac_sign}** ✨\n\n📅 {forecast}",
+        parse_mode="Markdown",
+        reply_markup=menu_keyboard
+    )
+    await state.set_state(Dialogue.chatting)
+
+@dp.message(StateFilter(Dialogue.waiting_for_birthdate_comp))
+async def process_compatibility_first(message: types.Message, state: FSMContext):
+    if not re.match(r'^\d{2}\.\d{2}\.\d{4}$', message.text):
+        await message.answer("❌ Неверный формат. Введите как `ДД.ММ.ГГГГ`", reply_markup=menu_keyboard)
+        return
+    await state.update_data(date1=message.text)
+    await state.set_state(Dialogue.waiting_for_birthdate_comp2)
+    await message.answer("Введите **вторую** дату рождения:\n`ДД.ММ.ГГГГ`", parse_mode="Markdown")
+
+@dp.message(StateFilter(Dialogue.waiting_for_birthdate_comp2))
+async def process_compatibility_second(message: types.Message, state: FSMContext):
+    if not re.match(r'^\d{2}\.\d{2}\.\d{4}$', message.text):
+        await message.answer("❌ Неверный формат. Введите как `ДД.ММ.ГГГГ`", reply_markup=menu_keyboard)
+        return
+    
+    data = await state.get_data()
+    date1 = data.get('date1')
+    if not date1:
+        await message.answer("❌ Ошибка. Начните заново.", reply_markup=menu_keyboard)
+        await state.clear()
+        return
+    
+    result = get_compatibility(date1, message.text)
+    if result['percent'] == 0:
+        await message.answer(f"❌ {result['text']}", reply_markup=menu_keyboard)
+    else:
+        await message.answer(
+            f"♊ **Совместимость**\n\n"
+            f"📅 {date1} -> {result['sign1']}\n"
+            f"📅 {message.text} -> {result['sign2']}\n\n"
+            f"💕 **{result['percent']}%**\n{result['text']}",
+            parse_mode="Markdown",
+            reply_markup=menu_keyboard
+        )
+    await state.set_state(Dialogue.chatting)
+
+@dp.message(StateFilter(Dialogue.waiting_for_contact))
+async def process_contact(message: types.Message, state: FSMContext):
+    contact = message.text
+    user_id = message.from_user.id
+    username = message.from_user.username or "None"
+    problem_info = user_problems.get(user_id, {"problem": "Диалог с ИИ", "direction": "не определено"})
+    
+    await notify_psychologist(user_id, username, problem_info["problem"], problem_info["direction"], contact)
+    
+    if user_id in user_history:
+        del user_history[user_id]
+    if user_id in user_problems:
+        del user_problems[user_id]
+    
+    await message.answer(
+        f"✅ Спасибо! Психолог {PSYCHOLOGIST_NAME} свяжется с вами.\n\nБерегите себя ❤️",
+        reply_markup=menu_keyboard
+    )
+    await state.clear()
+    await state.set_state(Dialogue.chatting)
 
 # ========== ОСНОВНОЙ ДИАЛОГ С ИИ ==========
 @dp.message(Dialogue.chatting)
@@ -530,6 +506,14 @@ async def chat_with_ai(message: types.Message, state: FSMContext):
             answer = answer.replace("ЗАПИСЬ_ГОТОВА", "").strip()
             if answer:
                 await message.answer(answer)
+            
+            # Создаем инлайн-кнопки прямо здесь
+            book_keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="📝 Записаться", callback_data="book")],
+                    [InlineKeyboardButton(text="❌ Отмена", callback_data="not_ready")]
+                ]
+            )
             await message.answer(
                 f"💬 **Как вы смотрите на то, чтобы обсудить это с психологом {PSYCHOLOGIST_NAME}?**",
                 reply_markup=book_keyboard
@@ -541,14 +525,23 @@ async def chat_with_ai(message: types.Message, state: FSMContext):
         print(f"❌ Ошибка ИИ: {e}")
         await message.answer("Извините, произошла ошибка. Попробуйте ещё раз.", reply_markup=menu_keyboard)
 
-@dp.message()
-async def fallback(message: types.Message, state: FSMContext):
-    """Если пользователь что-то написал вне диалога"""
-    current_state = await state.get_state()
-    if not current_state:
-        await cmd_start(message, state)
-    else:
-        await message.answer("Используйте кнопки меню или напишите /start", reply_markup=menu_keyboard)
+# ========== КОЛБЭКИ ДЛЯ ИНЛАЙН-КНОПОК ==========
+@dp.callback_query(lambda c: c.data == "book")
+async def handle_book(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await callback.message.answer(
+        "📝 **Оставьте контакт**\n\nНапишите @username или номер телефона.\n\n"
+        "Или нажмите /cancel для отмены.",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    await state.set_state(Dialogue.waiting_for_contact)
+
+@dp.callback_query(lambda c: c.data == "not_ready")
+async def handle_not_ready(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.clear()
+    await callback.message.answer("❌ Отменено.", reply_markup=menu_keyboard)
+    await state.set_state(Dialogue.chatting)
 
 # ========== ЗАПУСК ==========
 async def main():
