@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import random
+import aiohttp
 from datetime import datetime
 from typing import Dict, Any
 
@@ -14,21 +15,16 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
     ReplyKeyboardMarkup, KeyboardButton,
     InlineKeyboardMarkup, InlineKeyboardButton,
-    ReplyKeyboardRemove, URLInputFile
+    ReplyKeyboardRemove
 )
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
-
-from numerology import NumerologyCalculator
 
 # ========== ЗАГРУЗКА ПЕРЕМЕННЫХ ==========
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-ADMIN_IDS = [int(id.strip()) for id in os.getenv("ADMIN_IDS", "").split(",") if id.strip()]
 PSYCHOLOGIST_ID = int(os.getenv("PSYCHOLOGIST_ID", 0))
-SHEET_ID = os.getenv("SHEET_ID")
-GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
 
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не найден")
@@ -81,7 +77,7 @@ book_keyboard = InlineKeyboardMarkup(
 
 # ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 def get_zodiac_sign(day: int, month: int) -> str:
-    """Точное определение знака зодиака по дню и месяцу"""
+    """Точное определение знака зодиака"""
     if (month == 3 and day >= 21) or (month == 4 and day <= 19):
         return "Овен"
     elif (month == 4 and day >= 20) or (month == 5 and day <= 20):
@@ -106,6 +102,70 @@ def get_zodiac_sign(day: int, month: int) -> str:
         return "Водолей"
     else:
         return "Рыбы"
+
+def calculate_fate_number(birth_date: str) -> tuple:
+    """Упрощённый расчёт числа судьбы"""
+    try:
+        day, month, year = map(int, birth_date.split('.'))
+        total = sum(int(d) for d in str(day + month + year))
+        while total > 9:
+            total = sum(int(d) for d in str(total))
+        descriptions = {
+            1: "Лидерство, независимость, новаторство",
+            2: "Дипломатичность, сотрудничество, гармония",
+            3: "Творчество, коммуникация, оптимизм",
+            4: "Стабильность, порядок, трудолюбие",
+            5: "Свобода, перемены, приключения",
+            6: "Забота, ответственность, семья",
+            7: "Анализ, мудрость, духовность",
+            8: "Успех, власть, материализация",
+            9: "Гуманизм, завершение, прощение"
+        }
+        return (total, descriptions.get(total, "Уникальный путь"))
+    except:
+        return (0, "Ошибка формата даты")
+
+def get_compatibility(date1: str, date2: str) -> dict:
+    """Расчёт совместимости с правильными знаками зодиака"""
+    try:
+        day1, month1, _ = map(int, date1.split('.'))
+        day2, month2, _ = map(int, date2.split('.'))
+        
+        sign1 = get_zodiac_sign(day1, month1)
+        sign2 = get_zodiac_sign(day2, month2)
+        
+        # Базовая совместимость по стихиям
+        elements = {
+            "Овен": "Огонь", "Лев": "Огонь", "Стрелец": "Огонь",
+            "Телец": "Земля", "Дева": "Земля", "Козерог": "Земля",
+            "Близнецы": "Воздух", "Весы": "Воздух", "Водолей": "Воздух",
+            "Рак": "Вода", "Скорпион": "Вода", "Рыбы": "Вода"
+        }
+        
+        elem1 = elements.get(sign1, "")
+        elem2 = elements.get(sign2, "")
+        
+        if elem1 == elem2:
+            compatibility = random.randint(85, 98)
+            text = "🌟 Прекрасная совместимость! Вы на одной волне."
+        elif (elem1, elem2) in [("Огонь", "Воздух"), ("Воздух", "Огонь"),
+                                 ("Земля", "Вода"), ("Вода", "Земля")]:
+            compatibility = random.randint(70, 85)
+            text = "💫 Хорошая совместимость! Вы отлично дополняете друг друга."
+        else:
+            compatibility = random.randint(45, 70)
+            text = "🌱 Средняя совместимость. Есть над чем работать, но это интересно!"
+        
+        return {
+            "compatibility_percent": compatibility,
+            "text": text,
+            "sign1": sign1,
+            "sign2": sign2,
+            "number1": 0,
+            "number2": 0
+        }
+    except:
+        return {"compatibility_percent": 0, "text": "Ошибка"}
 
 # ========== ХРАНИЛИЩЕ ИСТОРИИ ==========
 user_history = {}
@@ -155,7 +215,7 @@ async def notify_psychologist(user_id: int, username: str, problem: str, directi
     if PSYCHOLOGIST_ID:
         try:
             await bot.send_message(PSYCHOLOGIST_ID, message, parse_mode="Markdown")
-            print(f"📤 Уведомление отправлено психологу {PSYCHOLOGIST_ID}")
+            print(f"📤 Уведомление отправлено")
         except Exception as e:
             logging.error(f"Ошибка отправки: {e}")
 
@@ -208,7 +268,7 @@ async def menu_help(message: types.Message):
         "🔮 **Число судьбы** - расчет по дате рождения\n"
         "⭐ **Гороскоп** - прогноз на сегодня\n"
         "♊ **Совместимость** - анализ пары\n"
-        "🎴 **Карта дня Таро** - с эмодзи и значением\n"
+        "🎴 **Карта дня Таро** - красивая карта с картинкой\n"
         "📞 **Запись к психологу** - живая консультация\n\n"
         "🗑 **Очистить диалог** / ❌ **Отмена**"
     )
@@ -244,14 +304,13 @@ async def process_fate_number(message: types.Message, state: FSMContext):
         await message.answer("❌ Неверный формат. Введите как `ДД.ММ.ГГГГ`", parse_mode="Markdown")
         return
     
-    number, description = NumerologyCalculator.calculate_fate_number(message.text)
+    number, description = calculate_fate_number(message.text)
     await message.answer(
         f"🔮 **Ваше число судьбы: {number}**\n\n{description}\n\n"
         f"✨ Это число раскрывает ваши врожденные таланты.",
         parse_mode="Markdown"
     )
     await state.set_state(Dialogue.chatting)
-    await message.answer("Можете продолжить диалог или выбрать другую функцию.", reply_markup=menu_keyboard)
 
 @dp.message(F.text == "⭐ Гороскоп")
 async def horoscope_start(message: types.Message, state: FSMContext):
@@ -268,13 +327,11 @@ async def process_horoscope(message: types.Message, state: FSMContext):
     text = message.text.strip()
     zodiac_sign = None
     
-    # Если ввели дату
     if re.match(r'^\d{2}\.\d{2}\.\d{4}$', text):
         day, month, _ = map(int, text.split('.'))
         zodiac_sign = get_zodiac_sign(day, month)
         await message.answer(f"♈ Ваш знак: **{zodiac_sign}**")
     else:
-        # Если ввели название знака
         known = {
             "овен": "Овен", "телец": "Телец", "близнецы": "Близнецы",
             "рак": "Рак", "лев": "Лев", "дева": "Дева",
@@ -284,29 +341,26 @@ async def process_horoscope(message: types.Message, state: FSMContext):
         if text.lower() in known:
             zodiac_sign = known[text.lower()]
         else:
-            await message.answer("❌ Неизвестный знак или неверная дата. Попробуйте еще раз.")
+            await message.answer("❌ Неизвестный знак.")
             return
     
     forecasts = {
-        "Овен": "🔥 Энергия бьет ключом! Начните новые дела, ваша инициатива принесет плоды.",
-        "Телец": "💰 Хороший день для финансовых решений. Не торопитесь с тратами.",
-        "Близнецы": "💬 День общения и новых знакомств. Полезная информация придет через друзей.",
-        "Рак": "🏠 День интуиции и семьи. Займитесь домом, уделите время близким.",
-        "Лев": "🎭 Творческий день. Покажите себя, ваши таланты будут замечены.",
-        "Дева": "📋 День порядка и планирования. Систематизируйте дела.",
-        "Весы": "⚖️ День гармонии. Избегайте конфликтов, ищите компромиссы.",
-        "Скорпион": "🦂 День трансформации. Глубокие размышления помогут найти решение.",
-        "Стрелец": "✈️ День приключений и оптимизма. Расширяйте горизонты!",
-        "Козерог": "🏔️ День достижений. Работайте над целями, будьте упорны.",
-        "Водолей": "💡 День идей и нестандартных решений. Делитесь мыслями!",
-        "Рыбы": "🎨 День творчества и интуиции. Займитесь искусством."
+        "Овен": "🔥 Энергия бьет ключом! Начните новые дела!",
+        "Телец": "💰 Хороший день для финансовых решений.",
+        "Близнецы": "💬 День общения и новых знакомств.",
+        "Рак": "🏠 День интуиции и семьи.",
+        "Лев": "🎭 Творческий день. Покажите себя!",
+        "Дева": "📋 День порядка и планирования.",
+        "Весы": "⚖️ День гармонии. Избегайте конфликтов.",
+        "Скорпион": "🦂 День трансформации.",
+        "Стрелец": "✈️ День приключений и оптимизма.",
+        "Козерог": "🏔️ День достижений. Будьте упорны.",
+        "Водолей": "💡 День идей и нестандартных решений.",
+        "Рыбы": "🎨 День творчества и интуиции."
     }
-    
-    forecast = forecasts.get(zodiac_sign, "🌟 Гармоничный день. Доверьтесь своей интуиции.")
+    forecast = forecasts.get(zodiac_sign, "🌟 Гармоничный день.")
     await message.answer(
-        f"✨ **Гороскоп для {zodiac_sign}** ✨\n\n"
-        f"📅 **Сегодня:** {forecast}\n\n"
-        f"💫 Хорошего дня!",
+        f"✨ **Гороскоп для {zodiac_sign}** ✨\n\n📅 **Сегодня:** {forecast}",
         parse_mode="Markdown"
     )
     await state.set_state(Dialogue.chatting)
@@ -341,59 +395,48 @@ async def process_compatibility_second(message: types.Message, state: FSMContext
         await state.clear()
         return
     
-    result = NumerologyCalculator.get_compatibility(date1, message.text)
+    result = get_compatibility(date1, message.text)
     if result['compatibility_percent'] == 0:
         await message.answer("❌ Ошибка расчета. Проверьте даты.")
     else:
         await message.answer(
             f"♊ **Совместимость**\n\n"
-            f"📅 Дата 1: {date1} ({result['sign1']}, число {result['number1']})\n"
-            f"📅 Дата 2: {message.text} ({result['sign2']}, число {result['number2']})\n\n"
+            f"📅 Дата 1: {date1} ({result['sign1']})\n"
+            f"📅 Дата 2: {message.text} ({result['sign2']})\n\n"
             f"💕 **Совместимость: {result['compatibility_percent']}%**\n{result['text']}",
             parse_mode="Markdown"
         )
     await state.set_state(Dialogue.chatting)
 
+# ========== КАРТА ДНЯ ТАРО С РЕАЛЬНЫМИ ИЗОБРАЖЕНИЯМИ ==========
 @dp.message(F.text == "🎴 Карта дня Таро")
 async def taro_card_handler(message: types.Message):
-    await message.answer("🎴 Вытягиваю карту дня...")
+    waiting_msg = await message.answer("🎴 Вытягиваю карту дня...")
     
-    # Словарь карт Таро с эмодзи и значениями
-    taro_cards = {
-        "0 - Шут": {"emoji": "🎭", "meaning": "Новое начало, невинность, спонтанность. Позвольте себе сделать первый шаг в неизвестность!"},
-        "1 - Маг": {"emoji": "🪄", "meaning": "Сила воли, концентрация, проявление желаний. У вас есть все ресурсы для достижения цели!"},
-        "2 - Верховная Жрица": {"emoji": "🌙", "meaning": "Интуиция, тайны, подсознание. Доверьтесь своему внутреннему голосу."},
-        "3 - Императрица": {"emoji": "👑", "meaning": "Творчество, изобилие, материнство. Пришло время творить и заботиться."},
-        "4 - Император": {"emoji": "🏛️", "meaning": "Структура, власть, стабильность. Укрепляйте свои границы."},
-        "5 - Иерофант": {"emoji": "⛪", "meaning": "Традиции, обучение, духовность. Обратитесь к опыту старших."},
-        "6 - Влюбленные": {"emoji": "💕", "meaning": "Любовь, выбор, гармония. Важный выбор на пути."},
-        "7 - Колесница": {"emoji": "⚡", "meaning": "Воля, контроль, победа. Управляйте своей судьбой!"},
-        "8 - Сила": {"emoji": "🦁", "meaning": "Мужество, сострадание, внутренняя сила. Вы сильнее, чем кажетесь."},
-        "9 - Отшельник": {"emoji": "🏮", "meaning": "Самоанализ, мудрость, поиск истины. Время побыть наедине."},
-        "10 - Колесо Фортуны": {"emoji": "🎡", "meaning": "Перемены, судьба, удача. Жизнь меняется к лучшему."},
-        "11 - Справедливость": {"emoji": "⚖️", "meaning": "Честность, равновесие, закон. Поступите справедливо."},
-        "12 - Повешенный": {"emoji": "🪢", "meaning": "Жертва, новая перспектива. Посмотрите на ситуацию иначе."},
-        "13 - Смерть": {"emoji": "♻️", "meaning": "Трансформация, завершение, новое начало. Старое уходит."},
-        "14 - Умеренность": {"emoji": "⚖️", "meaning": "Баланс, терпение, гармония. Найдите золотую середину."},
-        "15 - Дьявол": {"emoji": "😈", "meaning": "Освобождение от зависимостей. От чего пора отказаться?"},
-        "16 - Башня": {"emoji": "🏛️💥", "meaning": "Внезапные перемены. Старое рушится для нового."},
-        "17 - Звезда": {"emoji": "⭐", "meaning": "Надежда, вдохновение, исцеление. Верьте в лучшее!"},
-        "18 - Луна": {"emoji": "🌕", "meaning": "Иллюзии, страхи, подсознание. Доверяйте интуиции."},
-        "19 - Солнце": {"emoji": "☀️", "meaning": "Радость, успех, позитив. Всё будет хорошо!"},
-        "20 - Суд": {"emoji": "🎺", "meaning": "Пробуждение, прощение, возрождение. Время подвести итоги."},
-        "21 - Мир": {"emoji": "🌍", "meaning": "Завершение, целостность, удовлетворение. Вы достигли цели!"}
-    }
-    
-    card_name = random.choice(list(taro_cards.keys()))
-    card = taro_cards[card_name]
-    
-    await message.answer(
-        f"🎴 **Карта дня: {card_name}**\n\n"
-        f"{card['emoji']} **Значение:** {card['meaning']}\n\n"
-        f"✨ Энергия этой карты будет сопровождать вас сегодня.\n\n"
-        f"💫 **Совет:** Прислушайтесь к посланию карты в течение дня.",
-        parse_mode="Markdown"
-    )
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get("https://tarotapi.dev/api/v1/cards/random", timeout=10) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    card = data['cards'][0]
+                    card_name = card.get('name', 'Карта')
+                    card_meaning = card.get('meaning_up', 'Интуитивное значение')
+                    
+                    # Формируем URL картинки
+                    img_name = card_name.lower().replace(' ', '_') + '.jpg'
+                    img_url = f"https://tarotapi.dev/images/{img_name}"
+                    
+                    await waiting_msg.delete()
+                    await message.answer_photo(
+                        photo=img_url,
+                        caption=f"🎴 **Карта дня: {card_name}**\n\n✨ {card_meaning}\n\n✨ Энергия этой карты будет сопровождать вас сегодня.",
+                        parse_mode="Markdown"
+                    )
+                else:
+                    await waiting_msg.edit_text("🎴 **Карта дня: Мир**\n\n✨ Завершение, целостность, удовлетворение. Вы достигли цели!\n\n✨ Энергия этой карты будет сопровождать вас сегодня.", parse_mode="Markdown")
+        except Exception as e:
+            print(f"Ошибка Таро: {e}")
+            await waiting_msg.edit_text("🎴 **Карта дня: Звезда**\n\n✨ Надежда, вдохновение, исцеление. Верьте в лучшее!\n\n✨ Энергия этой карты будет сопровождать вас сегодня.", parse_mode="Markdown")
 
 @dp.message(F.text == "📞 Запись к психологу")
 async def book_psychologist(message: types.Message, state: FSMContext):
@@ -421,7 +464,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
         f"🔮 Рассчитать число судьбы\n"
         f"⭐ Сделать гороскоп\n"
         f"♊ Проверить совместимость\n"
-        f"🎴 Вытянуть карту Таро\n\n"
+        f"🎴 Вытянуть карту Таро с картинкой\n\n"
         f"Используй кнопки меню 👇",
         reply_markup=menu_keyboard,
         parse_mode="Markdown"
@@ -506,7 +549,7 @@ async def chat_with_ai(message: types.Message, state: FSMContext):
 
 # ========== ЗАПУСК ==========
 async def main():
-    print("🚀 Бот с ИИ-ассистентом, нумерологией и Таро запущен!")
+    print("🚀 Бот с ИИ-ассистентом, нумерологией и ТАРО (с картинками!) запущен!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
