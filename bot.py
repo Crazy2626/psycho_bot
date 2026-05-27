@@ -22,7 +22,7 @@ from openai import AsyncOpenAI
 
 # ========== ЗАГРУЗКА ПЕРЕМЕННЫХ ==========
 load_dotenv()
-
+print(f"DEBUG: GROQ_API_KEY = {os.getenv('GROQ_API_KEY')}")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_IDS = [int(id.strip()) for id in os.getenv("ADMIN_IDS", "").split(",") if id.strip()]
