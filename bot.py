@@ -71,30 +71,42 @@ book_keyboard = InlineKeyboardMarkup(
 # ========== ПРАВИЛЬНОЕ ОПРЕДЕЛЕНИЕ ЗНАКОВ ЗОДИАКА ==========
 def get_zodiac_sign(day: int, month: int) -> str:
     """Точное определение знака зодиака"""
-    if (month == 3 and day >= 21) or (month == 4 and day <= 19):
+    # Водолей (20.01 - 18.02)
+    if (month == 1 and day >= 20) or (month == 2 and day <= 18):
+        return "Водолей"
+    # Рыбы (19.02 - 20.03)
+    elif (month == 2 and day >= 19) or (month == 3 and day <= 20):
+        return "Рыбы"
+    # Овен (21.03 - 19.04)
+    elif (month == 3 and day >= 21) or (month == 4 and day <= 19):
         return "Овен"
+    # Телец (20.04 - 20.05)
     elif (month == 4 and day >= 20) or (month == 5 and day <= 20):
         return "Телец"
+    # Близнецы (21.05 - 20.06)
     elif (month == 5 and day >= 21) or (month == 6 and day <= 20):
         return "Близнецы"
+    # Рак (21.06 - 22.07)
     elif (month == 6 and day >= 21) or (month == 7 and day <= 22):
         return "Рак"
+    # Лев (23.07 - 22.08)
     elif (month == 7 and day >= 23) or (month == 8 and day <= 22):
         return "Лев"
+    # Дева (23.08 - 22.09)
     elif (month == 8 and day >= 23) or (month == 9 and day <= 22):
         return "Дева"
+    # Весы (23.09 - 22.10)
     elif (month == 9 and day >= 23) or (month == 10 and day <= 22):
         return "Весы"
+    # Скорпион (23.10 - 21.11)
     elif (month == 10 and day >= 23) or (month == 11 and day <= 21):
         return "Скорпион"
+    # Стрелец (22.11 - 21.12)
     elif (month == 11 and day >= 22) or (month == 12 and day <= 21):
         return "Стрелец"
-    elif (month == 12 and day >= 22) or (month == 1 and day <= 19):
-        return "Козерог"
-    elif (month == 1 and day >= 20) or (month == 2 and day <= 18):
-        return "Водолей"
+    # Козерог (22.12 - 19.01)
     else:
-        return "Рыбы"
+        return "Козерог"
 
 # ========== РАСЧЕТ ЧИСЛА СУДЬБЫ ==========
 def calculate_fate_number(birth_date: str) -> tuple:
