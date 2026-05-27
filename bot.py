@@ -29,11 +29,10 @@ PSYCHOLOGIST_ID = int(os.getenv("PSYCHOLOGIST_ID", 0))
 SHEET_ID = os.getenv("SHEET_ID")
 GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
 
-# Проверка наличия ключей
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не найден")
 
-# ========== ИНИЦИАЛИЗАЦИЯ GROQ (ИИ) ==========
+# ========== ИНИЦИАЛИЗАЦИЯ GROQ ==========
 groq_client = AsyncOpenAI(
     api_key=GROQ_API_KEY,
     base_url="https://api.groq.com/openai/v1"
@@ -42,9 +41,8 @@ groq_client = AsyncOpenAI(
 if groq_client:
     print("🤖 ИИ-ассистент (Groq) инициализирован")
 else:
-    print("⚠️ GROQ_API_KEY не найден, ИИ-ассистент не работает")
+    print("⚠️ GROQ_API_KEY не найден")
 
-# Данные психолога
 PSYCHOLOGIST_NAME = "Дарья"
 
 logging.basicConfig(level=logging.INFO)
@@ -55,12 +53,12 @@ dp = Dispatcher(storage=storage)
 
 # ========== FSM СОСТОЯНИЯ ==========
 class Dialogue(StatesGroup):
-    chatting = State()                    # Основной диалог с ИИ
-    waiting_for_contact = State()         # Ожидание контакта для записи
-    waiting_for_birthdate = State()       # Для числа судьбы
-    waiting_for_birthdate_comp = State()  # Для совместимости (дата 1)
-    waiting_for_birthdate_comp2 = State() # Для совместимости (дата 2)
-    waiting_for_zodiac = State()          # Для гороскопа
+    chatting = State()
+    waiting_for_contact = State()
+    waiting_for_birthdate = State()
+    waiting_for_birthdate_comp = State()
+    waiting_for_birthdate_comp2 = State()
+    waiting_for_zodiac = State()
 
 # ========== КНОПКИ МЕНЮ ==========
 menu_keyboard = ReplyKeyboardMarkup(
@@ -73,7 +71,6 @@ menu_keyboard = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-# Кнопка для записи (инлайн)
 book_keyboard = InlineKeyboardMarkup(
     inline_keyboard=[
         [InlineKeyboardButton(text="📝 Записаться к Дарье", callback_data="book")],
@@ -81,11 +78,10 @@ book_keyboard = InlineKeyboardMarkup(
     ]
 )
 
-# ========== ХРАНИЛИЩЕ ИСТОРИИ ДИАЛОГОВ ==========
+# ========== ХРАНИЛИЩЕ ==========
 user_history = {}
 user_problems = {}
 
-# Системный промпт для ИИ-ассистента
 SYSTEM_PROMPT = f"""Ты — эмпатичный помощник-психолог по имени {PSYCHOLOGIST_NAME}.
 
 Твои правила:
@@ -107,25 +103,19 @@ def detect_direction(text: str) -> str:
     text_lower = text.lower()
     keywords = {
         "тревога": ["тревог", "страх", "паник", "боюсь", "волнуюсь"],
-        "отношения": ["отношени", "партнёр", "муж", "жена", "ссор", "одиночеств"],
-        "выгорание": ["выгоран", "устал", "нет сил", "апати", "депресси"],
+        "отношения": ["отношени", "партнёр", "муж", "жена", "ссор"],
+        "выгорание": ["выгоран", "устал", "нет сил", "апати"],
         "самооценка": ["самооценк", "неуверен", "комплекс", "стыд"],
-        "дети": ["ребёнк", "дочь", "сын", "родител", "мама", "папа"]
+        "дети": ["ребёнк", "дочь", "сын", "родител"]
     }
     for direction, words in keywords.items():
         for word in words:
             if word in text_lower:
                 return direction
-    return "общая психологическая поддержка"
+    return "общая поддержка"
 
-# ========== GOOGLE SHEETS ==========
-def save_to_sheet(user_id: int, username: str, problem: str, direction: str, contact: str):
-    """Сохраняет заявку в Google Sheets (упрощённо, без проверок)"""
-    print(f"📝 Сохранение заявки: {username}, {direction}")
-    return True
-
+# ========== УВЕДОМЛЕНИЕ ПСИХОЛОГУ ==========
 async def notify_psychologist(user_id: int, username: str, problem: str, direction: str, contact: str):
-    """Отправляет уведомление психологу в Telegram"""
     message = (
         f"🔔 **НОВЫЙ ЗАПРОС**\n\n"
         f"👤 {username} (ID: {user_id})\n"
@@ -155,7 +145,7 @@ async def handle_book(callback: types.CallbackQuery, state: FSMContext):
 async def handle_not_ready(callback: types.CallbackQuery):
     await callback.answer()
     await callback.message.answer(
-        "Хорошо, я здесь если захочешь поговорить. Напиши /start",
+        "Хорошо, я здесь. Напиши /start когда захочешь поговорить.",
         reply_markup=menu_keyboard
     )
 
@@ -167,7 +157,6 @@ async def process_contact(message: types.Message, state: FSMContext):
     problem_info = user_problems.get(user_id, {"problem": "Диалог с ИИ", "direction": "не определено"})
     
     await notify_psychologist(user_id, username, problem_info["problem"], problem_info["direction"], contact)
-    save_to_sheet(user_id, username, problem_info["problem"], problem_info["direction"], contact)
     
     if user_id in user_history:
         del user_history[user_id]
@@ -180,106 +169,38 @@ async def process_contact(message: types.Message, state: FSMContext):
     )
     await state.clear()
 
-# ========== ОСНОВНОЙ ДИАЛОГ С ИИ ==========
-@dp.message(Command("start"))
-async def cmd_start(message: types.Message, state: FSMContext):
+# ========== ОБРАБОТЧИКИ КНОПОК МЕНЮ ==========
+
+@dp.message(F.text == "ℹ️ Помощь")
+async def menu_help(message: types.Message):
+    help_text = (
+        "📖 **Доступные функции:**\n\n"
+        "💬 **Просто напишите** - я выслушаю и поддержу\n"
+        "🔮 **Число судьбы** - расчет по дате рождения\n"
+        "⭐ **Гороскоп** - прогноз на сегодня\n"
+        "♊ **Совместимость** - анализ пары\n"
+        "🎴 **Карта дня Таро** - с изображением\n"
+        "📞 **Запись к психологу** - живая консультация\n\n"
+        "🗑 **Очистить диалог** / ❌ **Отмена**"
+    )
+    await message.answer(help_text, parse_mode="Markdown")
+
+@dp.message(F.text == "🗑 Очистить диалог")
+async def menu_reset(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
-    await state.clear()
     if user_id in user_history:
         del user_history[user_id]
     if user_id in user_problems:
         del user_problems[user_id]
-    
-    await message.answer(
-        f"👋 **Привет! Я {PSYCHOLOGIST_NAME}, психолог-ассистент.**\n\n"
-        f"Расскажи, что тебя беспокоит. Я внимательно выслушаю.\n\n"
-        f"Также я могу:\n"
-        f"🔮 Рассчитать число судьбы\n"
-        f"⭐ Сделать гороскоп\n"
-        f"♊ Проверить совместимость\n"
-        f"🎴 Вытянуть карту Таро\n\n"
-        f"Используй кнопки меню 👇",
-        reply_markup=menu_keyboard,
-        parse_mode="Markdown"
-    )
+    await state.clear()
+    await message.answer("🗑 История и состояния очищены.", reply_markup=menu_keyboard)
     await state.set_state(Dialogue.chatting)
 
-@dp.message(Command("reset"))
-async def cmd_reset(message: types.Message, state: FSMContext):
-    user_id = message.from_user.id
-    if user_id in user_history:
-        del user_history[user_id]
-    if user_id in user_problems:
-        del user_problems[user_id]
-    await message.answer("🔄 История диалога очищена.", reply_markup=menu_keyboard)
+@dp.message(F.text == "❌ Отмена")
+async def menu_cancel(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.answer("❌ Действие отменено.", reply_markup=menu_keyboard)
 
-@dp.message(Dialogue.chatting)
-async def chat_with_ai(message: types.Message, state: FSMContext):
-    user_id = message.from_user.id
-    user_text = message.text
-    
-    # Пропускаем команды и кнопки
-    if user_text in ["ℹ️ Помощь", "🗑 Очистить диалог", "❌ Отмена", 
-                     "🔮 Число судьбы", "⭐ Гороскоп", "♊ Совместимость", 
-                     "🎴 Карта дня Таро", "📞 Запись к психологу"]:
-        return
-    
-    print(f"📨 Получено: {user_text}")
-    
-    # Кризисная проверка
-    crisis = ["суицид", "самоубийств", "не хочу жить", "покончить с собой"]
-    if any(word in user_text.lower() for word in crisis):
-        await message.answer("🚨 Телефон доверия: 8-800-2000-122. Пожалуйста, позвоните ❤️")
-        return
-    
-    # Если ИИ не настроен (нет ключа Groq)
-    if not groq_client:
-        await message.answer(
-            "🤖 ИИ-ассистент временно недоступен. Пожалуйста, используйте кнопки меню "
-            "для нумерологии, гороскопа или запишитесь к психологу."
-        )
-        return
-    
-    # Сохраняем проблему пользователя
-    if user_id not in user_problems:
-        user_problems[user_id] = {"problem": user_text, "direction": detect_direction(user_text)}
-    
-    try:
-        history = get_history(user_id)
-        history.append({"role": "user", "content": user_text})
-        
-        response = await groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=history,
-            max_tokens=350,
-            temperature=0.8
-        )
-        
-        answer = response.choices[0].message.content
-        history.append({"role": "assistant", "content": answer})
-        
-        if len(history) > 15:
-            user_history[user_id] = [history[0]] + history[-12:]
-        else:
-            user_history[user_id] = history
-        
-        if "ЗАПИСЬ_ГОТОВА" in answer:
-            answer = answer.replace("ЗАПИСЬ_ГОТОВА", "").strip()
-            if answer:
-                await message.answer(answer)
-            await message.answer(
-                f"💬 **Как ты смотришь на то, чтобы обсудить это с психологом {PSYCHOLOGIST_NAME}?**\n\n"
-                f"Это конфиденциально и не обязывает к продолжению.",
-                reply_markup=book_keyboard
-            )
-        else:
-            await message.answer(answer)
-        
-    except Exception as e:
-        print(f"❌ Ошибка ИИ: {e}")
-        await message.answer("Извините, произошла ошибка. Попробуйте ещё раз или используйте кнопки меню.")
-
-# ========== НУМЕРОЛОГИЯ И ТАРО ==========
 @dp.message(F.text == "🔮 Число судьбы")
 async def fate_number_start(message: types.Message, state: FSMContext):
     await state.set_state(Dialogue.waiting_for_birthdate)
@@ -318,7 +239,6 @@ async def process_horoscope(message: types.Message, state: FSMContext):
     text = message.text.strip()
     zodiac_sign = None
     
-    # Простейшее определение знака по дате
     if re.match(r'^\d{2}\.\d{2}\.\d{4}$', text):
         day, month, _ = map(int, text.split('.'))
         if (month == 3 and day >= 21) or (month == 4 and day <= 19): zodiac_sign = "Овен"
@@ -406,20 +326,77 @@ async def process_compatibility_second(message: types.Message, state: FSMContext
 @dp.message(F.text == "🎴 Карта дня Таро")
 async def taro_card_handler(message: types.Message):
     await message.answer("🎴 Вытягиваю карту дня...")
+    
+    # Отправляем реальное изображение карты Таро
+    # Используем прямое API с изображениями
+    taro_images = {
+        "Шут": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/fool.jpg",
+        "Маг": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/magician.jpg",
+        "Верховная Жрица": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/priestess.jpg",
+        "Императрица": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/empress.jpg",
+        "Император": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/emperor.jpg",
+        "Иерофант": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/hierophant.jpg",
+        "Влюбленные": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/lovers.jpg",
+        "Колесница": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/chariot.jpg",
+        "Сила": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/strength.jpg",
+        "Отшельник": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/hermit.jpg",
+        "Колесо Фортуны": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/wheel.jpg",
+        "Справедливость": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/justice.jpg",
+        "Повешенный": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/hanged.jpg",
+        "Смерть": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/death.jpg",
+        "Умеренность": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/temperance.jpg",
+        "Дьявол": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/devil.jpg",
+        "Башня": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/tower.jpg",
+        "Звезда": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/star.jpg",
+        "Луна": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/moon.jpg",
+        "Солнце": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/sun.jpg",
+        "Суд": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/judgement.jpg",
+        "Мир": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/world.jpg"
+    }
+    
+    import random
+    card_name = random.choice(list(taro_images.keys()))
+    image_url = taro_images[card_name]
+    
+    meanings = {
+        "Шут": "Новое начало, невинность, спонтанность. Позвольте себе сделать первый шаг!",
+        "Маг": "Сила воли, концентрация, проявление желаний. У вас есть все ресурсы!",
+        "Верховная Жрица": "Интуиция, тайны, подсознание. Доверьтесь своему внутреннему голосу.",
+        "Императрица": "Творчество, изобилие, материнство. Пришло время творить и заботиться.",
+        "Император": "Структура, власть, стабильность. Укрепляйте свои границы.",
+        "Иерофант": "Традиции, обучение, духовность. Обратитесь к опыту старших.",
+        "Влюбленные": "Любовь, выбор, гармония. Важный выбор на пути.",
+        "Колесница": "Воля, контроль, победа. Управляйте своей судьбой!",
+        "Сила": "Мужество, сострадание, внутренняя сила. Вы сильнее, чем кажетесь.",
+        "Отшельник": "Самоанализ, мудрость, поиск истины. Время побыть наедине.",
+        "Колесо Фортуны": "Перемены, судьба, удача. Жизнь меняется к лучшему.",
+        "Справедливость": "Честность, равновесие, закон. Поступите справедливо.",
+        "Повешенный": "Жертва, новая перспектива. Посмотрите на ситуацию иначе.",
+        "Смерть": "Трансформация, завершение, новое начало. Старое уходит.",
+        "Умеренность": "Баланс, терпение, гармония. Найдите золотую середину.",
+        "Дьявол": "Освобождение от зависимостей. От чего пора отказаться?",
+        "Башня": "Внезапные перемены. Старое рушится для нового.",
+        "Звезда": "Надежда, вдохновение, исцеление. Верьте в лучшее!",
+        "Луна": "Иллюзии, страхи, подсознание. Доверяйте интуиции.",
+        "Солнце": "Радость, успех, позитив. Всё будет хорошо!",
+        "Суд": "Пробуждение, прощение, возрождение. Время подвести итоги.",
+        "Мир": "Завершение, целостность, удовлетворение. Вы достигли цели!"
+    }
+    
+    meaning = meanings.get(card_name, "Интуитивное значение. Доверьтесь себе.")
+    
     try:
-        name, image_url, meaning = await NumerologyCalculator.get_taro_card_with_image()
-        if image_url:
-            await message.answer_photo(
-                photo=URLInputFile(image_url),
-                caption=f"🎴 **Карта дня: {name}**\n\n{meaning}",
-                parse_mode="Markdown"
-            )
-        else:
-            await message.answer(f"🎴 **Карта дня: {name}**\n\n{meaning}", parse_mode="Markdown")
+        await message.answer_photo(
+            photo=URLInputFile(image_url),
+            caption=f"🎴 **Карта дня: {card_name}**\n\n{meaning}\n\n✨ Энергия этой карты будет сопровождать вас сегодня.",
+            parse_mode="Markdown"
+        )
     except Exception as e:
-        print(f"Ошибка Таро: {e}")
-        name, _, meaning = NumerologyCalculator.get_taro_card_local()
-        await message.answer(f"🎴 **Карта дня: {name}**\n\n{meaning}", parse_mode="Markdown")
+        print(f"Ошибка отправки картинки: {e}")
+        await message.answer(
+            f"🎴 **Карта дня: {card_name}**\n\n{meaning}\n\n✨ Энергия этой карты будет сопровождать вас сегодня.",
+            parse_mode="Markdown"
+        )
 
 @dp.message(F.text == "📞 Запись к психологу")
 async def book_psychologist(message: types.Message, state: FSMContext):
@@ -430,35 +407,29 @@ async def book_psychologist(message: types.Message, state: FSMContext):
     )
     await state.set_state(Dialogue.waiting_for_contact)
 
-@dp.message(F.text == "ℹ️ Помощь")
-async def menu_help(message: types.Message):
-    help_text = (
-        "📖 **Доступные функции:**\n\n"
-        "💬 **Просто напишите** - я выслушаю и поддержу\n"
-        "🔮 **Число судьбы** - расчет по дате рождения\n"
-        "⭐ **Гороскоп** - прогноз на сегодня\n"
-        "♊ **Совместимость** - анализ пары\n"
-        "🎴 **Карта дня Таро** - с изображением\n"
-        "📞 **Запись к психологу** - живая консультация\n\n"
-        "🗑 **Очистить диалог** / ❌ **Отмена**"
-    )
-    await message.answer(help_text, parse_mode="Markdown")
-
-@dp.message(F.text == "🗑 Очистить диалог")
-async def menu_reset(message: types.Message, state: FSMContext):
+# ========== ОСНОВНОЙ ДИАЛОГ ==========
+@dp.message(Command("start"))
+async def cmd_start(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
+    await state.clear()
     if user_id in user_history:
         del user_history[user_id]
     if user_id in user_problems:
         del user_problems[user_id]
-    await state.clear()
-    await message.answer("🗑 История и состояния очищены.", reply_markup=menu_keyboard)
+    
+    await message.answer(
+        f"👋 **Привет! Я {PSYCHOLOGIST_NAME}, психолог-ассистент.**\n\n"
+        f"Расскажи, что тебя беспокоит. Я внимательно выслушаю.\n\n"
+        f"Также я могу:\n"
+        f"🔮 Рассчитать число судьбы\n"
+        f"⭐ Сделать гороскоп\n"
+        f"♊ Проверить совместимость\n"
+        f"🎴 Вытянуть карту Таро\n\n"
+        f"Используй кнопки меню 👇",
+        reply_markup=menu_keyboard,
+        parse_mode="Markdown"
+    )
     await state.set_state(Dialogue.chatting)
-
-@dp.message(F.text == "❌ Отмена")
-async def menu_cancel(message: types.Message, state: FSMContext):
-    await state.clear()
-    await message.answer("❌ Действие отменено.", reply_markup=menu_keyboard)
 
 @dp.message(Command("cancel"))
 async def cmd_cancel(message: types.Message, state: FSMContext):
@@ -466,19 +437,75 @@ async def cmd_cancel(message: types.Message, state: FSMContext):
     await message.answer("❌ Действие отменено.", reply_markup=menu_keyboard)
 
 @dp.message(Command("reset"))
-async def cmd_reset_alt(message: types.Message, state: FSMContext):
+async def cmd_reset(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     if user_id in user_history:
         del user_history[user_id]
     if user_id in user_problems:
         del user_problems[user_id]
     await state.clear()
-    await message.answer("🔄 История очищена.", reply_markup=menu_keyboard)
+    await message.answer("🔄 История диалога очищена.", reply_markup=menu_keyboard)
     await state.set_state(Dialogue.chatting)
 
-@dp.message(Command("help"))
-async def cmd_help_alt(message: types.Message):
-    await menu_help(message)
+@dp.message(Dialogue.chatting)
+async def chat_with_ai(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    user_text = message.text
+    
+    menu_buttons = ["ℹ️ Помощь", "🗑 Очистить диалог", "❌ Отмена", 
+                    "🔮 Число судьбы", "⭐ Гороскоп", "♊ Совместимость", 
+                    "🎴 Карта дня Таро", "📞 Запись к психологу"]
+    if user_text in menu_buttons:
+        return
+    
+    print(f"📨 Получено: {user_text}")
+    
+    crisis = ["суицид", "самоубийств", "не хочу жить", "покончить с собой"]
+    if any(word in user_text.lower() for word in crisis):
+        await message.answer("🚨 Телефон доверия: 8-800-2000-122. Пожалуйста, позвоните ❤️")
+        return
+    
+    if not groq_client:
+        await message.answer("🤖 ИИ-ассистент временно недоступен. Используйте кнопки меню.")
+        return
+    
+    if user_id not in user_problems:
+        user_problems[user_id] = {"problem": user_text, "direction": detect_direction(user_text)}
+    
+    try:
+        history = get_history(user_id)
+        history.append({"role": "user", "content": user_text})
+        
+        response = await groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=history,
+            max_tokens=350,
+            temperature=0.8
+        )
+        
+        answer = response.choices[0].message.content
+        history.append({"role": "assistant", "content": answer})
+        
+        if len(history) > 15:
+            user_history[user_id] = [history[0]] + history[-12:]
+        else:
+            user_history[user_id] = history
+        
+        if "ЗАПИСЬ_ГОТОВА" in answer:
+            answer = answer.replace("ЗАПИСЬ_ГОТОВА", "").strip()
+            if answer:
+                await message.answer(answer)
+            await message.answer(
+                f"💬 **Как ты смотришь на то, чтобы обсудить это с психологом {PSYCHOLOGIST_NAME}?**\n\n"
+                f"Это конфиденциально и не обязывает к продолжению.",
+                reply_markup=book_keyboard
+            )
+        else:
+            await message.answer(answer)
+        
+    except Exception as e:
+        print(f"❌ Ошибка ИИ: {e}")
+        await message.answer("Извините, произошла ошибка. Попробуйте ещё раз или используйте кнопки меню.")
 
 # ========== ЗАПУСК ==========
 async def main():
