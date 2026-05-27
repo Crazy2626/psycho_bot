@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import re
+import random
 from datetime import datetime
 from typing import Dict, Any
 
@@ -78,7 +79,35 @@ book_keyboard = InlineKeyboardMarkup(
     ]
 )
 
-# ========== ХРАНИЛИЩЕ ==========
+# ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
+def get_zodiac_sign(day: int, month: int) -> str:
+    """Точное определение знака зодиака по дню и месяцу"""
+    if (month == 3 and day >= 21) or (month == 4 and day <= 19):
+        return "Овен"
+    elif (month == 4 and day >= 20) or (month == 5 and day <= 20):
+        return "Телец"
+    elif (month == 5 and day >= 21) or (month == 6 and day <= 20):
+        return "Близнецы"
+    elif (month == 6 and day >= 21) or (month == 7 and day <= 22):
+        return "Рак"
+    elif (month == 7 and day >= 23) or (month == 8 and day <= 22):
+        return "Лев"
+    elif (month == 8 and day >= 23) or (month == 9 and day <= 22):
+        return "Дева"
+    elif (month == 9 and day >= 23) or (month == 10 and day <= 22):
+        return "Весы"
+    elif (month == 10 and day >= 23) or (month == 11 and day <= 21):
+        return "Скорпион"
+    elif (month == 11 and day >= 22) or (month == 12 and day <= 21):
+        return "Стрелец"
+    elif (month == 12 and day >= 22) or (month == 1 and day <= 19):
+        return "Козерог"
+    elif (month == 1 and day >= 20) or (month == 2 and day <= 18):
+        return "Водолей"
+    else:
+        return "Рыбы"
+
+# ========== ХРАНИЛИЩЕ ИСТОРИИ ==========
 user_history = {}
 user_problems = {}
 
@@ -179,7 +208,7 @@ async def menu_help(message: types.Message):
         "🔮 **Число судьбы** - расчет по дате рождения\n"
         "⭐ **Гороскоп** - прогноз на сегодня\n"
         "♊ **Совместимость** - анализ пары\n"
-        "🎴 **Карта дня Таро** - с изображением\n"
+        "🎴 **Карта дня Таро** - с эмодзи и значением\n"
         "📞 **Запись к психологу** - живая консультация\n\n"
         "🗑 **Очистить диалог** / ❌ **Отмена**"
     )
@@ -239,45 +268,47 @@ async def process_horoscope(message: types.Message, state: FSMContext):
     text = message.text.strip()
     zodiac_sign = None
     
+    # Если ввели дату
     if re.match(r'^\d{2}\.\d{2}\.\d{4}$', text):
         day, month, _ = map(int, text.split('.'))
-        if (month == 3 and day >= 21) or (month == 4 and day <= 19): zodiac_sign = "Овен"
-        elif (month == 4 and day >= 20) or (month == 5 and day <= 20): zodiac_sign = "Телец"
-        elif (month == 5 and day >= 21) or (month == 6 and day <= 20): zodiac_sign = "Близнецы"
-        elif (month == 6 and day >= 21) or (month == 7 and day <= 22): zodiac_sign = "Рак"
-        elif (month == 7 and day >= 23) or (month == 8 and day <= 22): zodiac_sign = "Лев"
-        elif (month == 8 and day >= 23) or (month == 9 and day <= 22): zodiac_sign = "Дева"
-        elif (month == 9 and day >= 23) or (month == 10 and day <= 22): zodiac_sign = "Весы"
-        elif (month == 10 and day >= 23) or (month == 11 and day <= 21): zodiac_sign = "Скорпион"
-        elif (month == 11 and day >= 22) or (month == 12 and day <= 21): zodiac_sign = "Стрелец"
-        elif (month == 12 and day >= 22) or (month == 1 and day <= 19): zodiac_sign = "Козерог"
-        elif (month == 1 and day >= 20) or (month == 2 and day <= 18): zodiac_sign = "Водолей"
-        else: zodiac_sign = "Рыбы"
+        zodiac_sign = get_zodiac_sign(day, month)
         await message.answer(f"♈ Ваш знак: **{zodiac_sign}**")
     else:
-        known = ["овен","телец","близнецы","рак","лев","дева","весы","скорпион","стрелец","козерог","водолей","рыбы"]
+        # Если ввели название знака
+        known = {
+            "овен": "Овен", "телец": "Телец", "близнецы": "Близнецы",
+            "рак": "Рак", "лев": "Лев", "дева": "Дева",
+            "весы": "Весы", "скорпион": "Скорпион", "стрелец": "Стрелец",
+            "козерог": "Козерог", "водолей": "Водолей", "рыбы": "Рыбы"
+        }
         if text.lower() in known:
-            zodiac_sign = text.capitalize()
+            zodiac_sign = known[text.lower()]
         else:
-            await message.answer("❌ Неизвестный знак или неверная дата.")
+            await message.answer("❌ Неизвестный знак или неверная дата. Попробуйте еще раз.")
             return
     
     forecasts = {
-        "Овен": "🔥 Энергия бьет ключом! Начните новые дела.",
-        "Телец": "💰 Хороший день для финансовых решений.",
-        "Близнецы": "💬 День общения и новых знакомств.",
-        "Рак": "🏠 День интуиции и семьи.",
-        "Лев": "🎭 Творческий день. Покажите себя!",
-        "Дева": "📋 День порядка и планирования.",
-        "Весы": "⚖️ День гармонии. Избегайте конфликтов.",
-        "Скорпион": "🦂 День трансформации и глубоких мыслей.",
-        "Стрелец": "✈️ День приключений и оптимизма.",
-        "Козерог": "🏔️ День достижений. Будьте упорны.",
-        "Водолей": "💡 День идей и нестандартных решений.",
-        "Рыбы": "🎨 День творчества и интуиции."
+        "Овен": "🔥 Энергия бьет ключом! Начните новые дела, ваша инициатива принесет плоды.",
+        "Телец": "💰 Хороший день для финансовых решений. Не торопитесь с тратами.",
+        "Близнецы": "💬 День общения и новых знакомств. Полезная информация придет через друзей.",
+        "Рак": "🏠 День интуиции и семьи. Займитесь домом, уделите время близким.",
+        "Лев": "🎭 Творческий день. Покажите себя, ваши таланты будут замечены.",
+        "Дева": "📋 День порядка и планирования. Систематизируйте дела.",
+        "Весы": "⚖️ День гармонии. Избегайте конфликтов, ищите компромиссы.",
+        "Скорпион": "🦂 День трансформации. Глубокие размышления помогут найти решение.",
+        "Стрелец": "✈️ День приключений и оптимизма. Расширяйте горизонты!",
+        "Козерог": "🏔️ День достижений. Работайте над целями, будьте упорны.",
+        "Водолей": "💡 День идей и нестандартных решений. Делитесь мыслями!",
+        "Рыбы": "🎨 День творчества и интуиции. Займитесь искусством."
     }
-    forecast = forecasts.get(zodiac_sign, "🌟 Гармоничный день.")
-    await message.answer(f"✨ **Гороскоп для {zodiac_sign}** ✨\n\n📅 {forecast}", parse_mode="Markdown")
+    
+    forecast = forecasts.get(zodiac_sign, "🌟 Гармоничный день. Доверьтесь своей интуиции.")
+    await message.answer(
+        f"✨ **Гороскоп для {zodiac_sign}** ✨\n\n"
+        f"📅 **Сегодня:** {forecast}\n\n"
+        f"💫 Хорошего дня!",
+        parse_mode="Markdown"
+    )
     await state.set_state(Dialogue.chatting)
 
 @dp.message(F.text == "♊ Совместимость")
@@ -327,76 +358,42 @@ async def process_compatibility_second(message: types.Message, state: FSMContext
 async def taro_card_handler(message: types.Message):
     await message.answer("🎴 Вытягиваю карту дня...")
     
-    # Отправляем реальное изображение карты Таро
-    # Используем прямое API с изображениями
-    taro_images = {
-        "Шут": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/fool.jpg",
-        "Маг": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/magician.jpg",
-        "Верховная Жрица": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/priestess.jpg",
-        "Императрица": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/empress.jpg",
-        "Император": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/emperor.jpg",
-        "Иерофант": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/hierophant.jpg",
-        "Влюбленные": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/lovers.jpg",
-        "Колесница": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/chariot.jpg",
-        "Сила": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/strength.jpg",
-        "Отшельник": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/hermit.jpg",
-        "Колесо Фортуны": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/wheel.jpg",
-        "Справедливость": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/justice.jpg",
-        "Повешенный": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/hanged.jpg",
-        "Смерть": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/death.jpg",
-        "Умеренность": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/temperance.jpg",
-        "Дьявол": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/devil.jpg",
-        "Башня": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/tower.jpg",
-        "Звезда": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/star.jpg",
-        "Луна": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/moon.jpg",
-        "Солнце": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/sun.jpg",
-        "Суд": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/judgement.jpg",
-        "Мир": "https://cdn.jsdelivr.net/gh/PrismarineJS/mineflayer/docs/tarot/world.jpg"
+    # Словарь карт Таро с эмодзи и значениями
+    taro_cards = {
+        "0 - Шут": {"emoji": "🎭", "meaning": "Новое начало, невинность, спонтанность. Позвольте себе сделать первый шаг в неизвестность!"},
+        "1 - Маг": {"emoji": "🪄", "meaning": "Сила воли, концентрация, проявление желаний. У вас есть все ресурсы для достижения цели!"},
+        "2 - Верховная Жрица": {"emoji": "🌙", "meaning": "Интуиция, тайны, подсознание. Доверьтесь своему внутреннему голосу."},
+        "3 - Императрица": {"emoji": "👑", "meaning": "Творчество, изобилие, материнство. Пришло время творить и заботиться."},
+        "4 - Император": {"emoji": "🏛️", "meaning": "Структура, власть, стабильность. Укрепляйте свои границы."},
+        "5 - Иерофант": {"emoji": "⛪", "meaning": "Традиции, обучение, духовность. Обратитесь к опыту старших."},
+        "6 - Влюбленные": {"emoji": "💕", "meaning": "Любовь, выбор, гармония. Важный выбор на пути."},
+        "7 - Колесница": {"emoji": "⚡", "meaning": "Воля, контроль, победа. Управляйте своей судьбой!"},
+        "8 - Сила": {"emoji": "🦁", "meaning": "Мужество, сострадание, внутренняя сила. Вы сильнее, чем кажетесь."},
+        "9 - Отшельник": {"emoji": "🏮", "meaning": "Самоанализ, мудрость, поиск истины. Время побыть наедине."},
+        "10 - Колесо Фортуны": {"emoji": "🎡", "meaning": "Перемены, судьба, удача. Жизнь меняется к лучшему."},
+        "11 - Справедливость": {"emoji": "⚖️", "meaning": "Честность, равновесие, закон. Поступите справедливо."},
+        "12 - Повешенный": {"emoji": "🪢", "meaning": "Жертва, новая перспектива. Посмотрите на ситуацию иначе."},
+        "13 - Смерть": {"emoji": "♻️", "meaning": "Трансформация, завершение, новое начало. Старое уходит."},
+        "14 - Умеренность": {"emoji": "⚖️", "meaning": "Баланс, терпение, гармония. Найдите золотую середину."},
+        "15 - Дьявол": {"emoji": "😈", "meaning": "Освобождение от зависимостей. От чего пора отказаться?"},
+        "16 - Башня": {"emoji": "🏛️💥", "meaning": "Внезапные перемены. Старое рушится для нового."},
+        "17 - Звезда": {"emoji": "⭐", "meaning": "Надежда, вдохновение, исцеление. Верьте в лучшее!"},
+        "18 - Луна": {"emoji": "🌕", "meaning": "Иллюзии, страхи, подсознание. Доверяйте интуиции."},
+        "19 - Солнце": {"emoji": "☀️", "meaning": "Радость, успех, позитив. Всё будет хорошо!"},
+        "20 - Суд": {"emoji": "🎺", "meaning": "Пробуждение, прощение, возрождение. Время подвести итоги."},
+        "21 - Мир": {"emoji": "🌍", "meaning": "Завершение, целостность, удовлетворение. Вы достигли цели!"}
     }
     
-    import random
-    card_name = random.choice(list(taro_images.keys()))
-    image_url = taro_images[card_name]
+    card_name = random.choice(list(taro_cards.keys()))
+    card = taro_cards[card_name]
     
-    meanings = {
-        "Шут": "Новое начало, невинность, спонтанность. Позвольте себе сделать первый шаг!",
-        "Маг": "Сила воли, концентрация, проявление желаний. У вас есть все ресурсы!",
-        "Верховная Жрица": "Интуиция, тайны, подсознание. Доверьтесь своему внутреннему голосу.",
-        "Императрица": "Творчество, изобилие, материнство. Пришло время творить и заботиться.",
-        "Император": "Структура, власть, стабильность. Укрепляйте свои границы.",
-        "Иерофант": "Традиции, обучение, духовность. Обратитесь к опыту старших.",
-        "Влюбленные": "Любовь, выбор, гармония. Важный выбор на пути.",
-        "Колесница": "Воля, контроль, победа. Управляйте своей судьбой!",
-        "Сила": "Мужество, сострадание, внутренняя сила. Вы сильнее, чем кажетесь.",
-        "Отшельник": "Самоанализ, мудрость, поиск истины. Время побыть наедине.",
-        "Колесо Фортуны": "Перемены, судьба, удача. Жизнь меняется к лучшему.",
-        "Справедливость": "Честность, равновесие, закон. Поступите справедливо.",
-        "Повешенный": "Жертва, новая перспектива. Посмотрите на ситуацию иначе.",
-        "Смерть": "Трансформация, завершение, новое начало. Старое уходит.",
-        "Умеренность": "Баланс, терпение, гармония. Найдите золотую середину.",
-        "Дьявол": "Освобождение от зависимостей. От чего пора отказаться?",
-        "Башня": "Внезапные перемены. Старое рушится для нового.",
-        "Звезда": "Надежда, вдохновение, исцеление. Верьте в лучшее!",
-        "Луна": "Иллюзии, страхи, подсознание. Доверяйте интуиции.",
-        "Солнце": "Радость, успех, позитив. Всё будет хорошо!",
-        "Суд": "Пробуждение, прощение, возрождение. Время подвести итоги.",
-        "Мир": "Завершение, целостность, удовлетворение. Вы достигли цели!"
-    }
-    
-    meaning = meanings.get(card_name, "Интуитивное значение. Доверьтесь себе.")
-    
-    try:
-        await message.answer_photo(
-            photo=URLInputFile(image_url),
-            caption=f"🎴 **Карта дня: {card_name}**\n\n{meaning}\n\n✨ Энергия этой карты будет сопровождать вас сегодня.",
-            parse_mode="Markdown"
-        )
-    except Exception as e:
-        print(f"Ошибка отправки картинки: {e}")
-        await message.answer(
-            f"🎴 **Карта дня: {card_name}**\n\n{meaning}\n\n✨ Энергия этой карты будет сопровождать вас сегодня.",
-            parse_mode="Markdown"
-        )
+    await message.answer(
+        f"🎴 **Карта дня: {card_name}**\n\n"
+        f"{card['emoji']} **Значение:** {card['meaning']}\n\n"
+        f"✨ Энергия этой карты будет сопровождать вас сегодня.\n\n"
+        f"💫 **Совет:** Прислушайтесь к посланию карты в течение дня.",
+        parse_mode="Markdown"
+    )
 
 @dp.message(F.text == "📞 Запись к психологу")
 async def book_psychologist(message: types.Message, state: FSMContext):
