@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import random
+import json
 from datetime import datetime
 
 from aiogram import Bot, Dispatcher, types, F
@@ -17,12 +18,16 @@ from aiogram.types import (
 )
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
+import gspread
+from google.oauth2.service_account import Credentials
 
 # ========== ЗАГРУЗКА ПЕРЕМЕННЫХ ==========
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 PSYCHOLOGIST_ID = int(os.getenv("PSYCHOLOGIST_ID", 0))
+SHEET_ID = os.getenv("SHEET_ID")
+GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
 
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не найден")
@@ -64,40 +69,28 @@ menu_keyboard = ReplyKeyboardMarkup(
 # ========== ПРАВИЛЬНОЕ ОПРЕДЕЛЕНИЕ ЗНАКОВ ЗОДИАКА ==========
 def get_zodiac_sign(day: int, month: int) -> str:
     """Точное определение знака зодиака"""
-    # Водолей (20.01 - 18.02)
     if (month == 1 and day >= 20) or (month == 2 and day <= 18):
         return "Водолей"
-    # Рыбы (19.02 - 20.03)
     elif (month == 2 and day >= 19) or (month == 3 and day <= 20):
         return "Рыбы"
-    # Овен (21.03 - 19.04)
     elif (month == 3 and day >= 21) or (month == 4 and day <= 19):
         return "Овен"
-    # Телец (20.04 - 20.05)
     elif (month == 4 and day >= 20) or (month == 5 and day <= 20):
         return "Телец"
-    # Близнецы (21.05 - 20.06)
     elif (month == 5 and day >= 21) or (month == 6 and day <= 20):
         return "Близнецы"
-    # Рак (21.06 - 22.07)
     elif (month == 6 and day >= 21) or (month == 7 and day <= 22):
         return "Рак"
-    # Лев (23.07 - 22.08)
     elif (month == 7 and day >= 23) or (month == 8 and day <= 22):
         return "Лев"
-    # Дева (23.08 - 22.09)
     elif (month == 8 and day >= 23) or (month == 9 and day <= 22):
         return "Дева"
-    # Весы (23.09 - 22.10)
     elif (month == 9 and day >= 23) or (month == 10 and day <= 22):
         return "Весы"
-    # Скорпион (23.10 - 21.11)
     elif (month == 10 and day >= 23) or (month == 11 and day <= 21):
         return "Скорпион"
-    # Стрелец (22.11 - 21.12)
     elif (month == 11 and day >= 22) or (month == 12 and day <= 21):
         return "Стрелец"
-    # Козерог (22.12 - 19.01)
     else:
         return "Козерог"
 
@@ -132,7 +125,6 @@ def get_compatibility(date1: str, date2: str) -> dict:
         sign1 = get_zodiac_sign(day1, month1)
         sign2 = get_zodiac_sign(day2, month2)
         
-        # Стихии
         elements = {"Овен": "Огонь", "Лев": "Огонь", "Стрелец": "Огонь",
                     "Телец": "Земля", "Дева": "Земля", "Козерог": "Земля",
                     "Близнецы": "Воздух", "Весы": "Воздух", "Водолей": "Воздух",
@@ -192,7 +184,7 @@ def detect_direction(text: str) -> str:
                 return direction
     return "общая поддержка"
 
-# ========== УВЕДОМЛЕНИЕ ==========
+# ========== УВЕДОМЛЕНИЕ ПСИХОЛОГУ ==========
 async def notify_psychologist(user_id: int, username: str, problem: str, direction: str, contact: str):
     message = f"🔔 **НОВЫЙ ЗАПРОС**\n\n👤 {username}\n📝 {problem[:300]}\n🏷 {direction}\n📞 {contact}"
     if PSYCHOLOGIST_ID:
@@ -200,6 +192,44 @@ async def notify_psychologist(user_id: int, username: str, problem: str, directi
             await bot.send_message(PSYCHOLOGIST_ID, message, parse_mode="Markdown")
         except Exception as e:
             logging.error(f"Ошибка: {e}")
+
+# ========== СОХРАНЕНИЕ В GOOGLE SHEETS ==========
+def save_to_google_sheets(user_id: int, username: str, problem: str, direction: str, contact: str):
+    """Сохраняет заявку в Google Sheets"""
+    try:
+        if not GOOGLE_CREDENTIALS_JSON or not SHEET_ID:
+            print("⚠️ GOOGLE_CREDENTIALS_JSON или SHEET_ID не найдены")
+            return False
+        
+        creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
+        creds = Credentials.from_service_account_info(
+            creds_dict,
+            scopes=["https://www.googleapis.com/auth/spreadsheets"]
+        )
+        client = gspread.authorize(creds)
+        sheet = client.open_by_key(SHEET_ID).sheet1
+        
+        # Добавляем заголовки, если таблица пустая
+        if not sheet.get_all_values():
+            headers = ["Timestamp", "User ID", "Username", "Problem", "Direction", "Contact", "Status"]
+            sheet.append_row(headers)
+        
+        # Добавляем строку с данными
+        row = [
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            user_id,
+            username,
+            problem[:200],
+            direction,
+            contact,
+            "new"
+        ]
+        sheet.append_row(row)
+        print(f"✅ Заявка сохранена в Google Sheets: {username}")
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка сохранения в Google Sheets: {e}")
+        return False
 
 # ========== ОСНОВНЫЕ ОБРАБОТЧИКИ ==========
 @dp.message(Command("start"))
@@ -434,6 +464,7 @@ async def process_compatibility_second(message: types.Message, state: FSMContext
         )
     await state.set_state(Dialogue.chatting)
 
+# ========== ОБРАБОТКА ЗАПИСИ К ПСИХОЛОГУ (С СОХРАНЕНИЕМ В GOOGLE SHEETS) ==========
 @dp.message(StateFilter(Dialogue.waiting_for_contact))
 async def process_contact(message: types.Message, state: FSMContext):
     contact = message.text
@@ -441,6 +472,10 @@ async def process_contact(message: types.Message, state: FSMContext):
     username = message.from_user.username or "None"
     problem_info = user_problems.get(user_id, {"problem": "Диалог с ИИ", "direction": "не определено"})
     
+    # Сохраняем в Google Sheets
+    save_to_google_sheets(user_id, username, problem_info["problem"], problem_info["direction"], contact)
+    
+    # Отправляем уведомление психологу
     await notify_psychologist(user_id, username, problem_info["problem"], problem_info["direction"], contact)
     
     if user_id in user_history:
@@ -507,7 +542,6 @@ async def chat_with_ai(message: types.Message, state: FSMContext):
             if answer:
                 await message.answer(answer)
             
-            # Создаем инлайн-кнопки прямо здесь
             book_keyboard = InlineKeyboardMarkup(
                 inline_keyboard=[
                     [InlineKeyboardButton(text="📝 Записаться", callback_data="book")],
