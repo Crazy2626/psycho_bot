@@ -179,6 +179,10 @@ def set_user_gender(user_id: int, username: str, gender: str, name: str):
         ''', (user_id, username, gender, name, datetime.now()))
 
 def is_premium(user_id: int) -> bool:
+    # Для админа (психолога) Premium всегда активен
+    if user_id == PSYCHOLOGIST_ID:
+        return True
+    
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT is_premium, premium_until FROM users WHERE user_id = ?", (user_id,))
@@ -641,12 +645,9 @@ async def cmd_reset(message: types.Message, state: FSMContext):
     await message.answer("🔄 История нашего диалога очищена. Начинаем с чистого листа!", reply_markup=menu_keyboard)
     await state.set_state(Dialogue.chatting)
 
-# КОМАНДА ДЛЯ РУЧНОЙ АКТИВАЦИИ PREMIUM
+# КОМАНДА ДЛЯ РУЧНОЙ АКТИВАЦИИ PREMIUM (без проверки для админа)
 @dp.message(Command("activate_premium"))
 async def force_activate_premium(message: types.Message):
-    if message.from_user.id != PSYCHOLOGIST_ID:
-        await message.answer("⛔ Только администратор может использовать эту команду.")
-        return
     user_id = message.from_user.id
     activate_premium(user_id, 30)
     await message.answer(
