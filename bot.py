@@ -178,25 +178,45 @@ def set_user_gender(user_id: int, username: str, gender: str, name: str):
             VALUES (?, ?, ?, ?, ?)
         ''', (user_id, username, gender, name, datetime.now()))
 
+def activate_premium(user_id: int, duration_days: int = 30):
+    """Активирует Premium-подписку для пользователя (по московскому времени)"""
+    moscow_tz = pytz.timezone('Europe/Moscow')
+    until = datetime.now(moscow_tz) + timedelta(days=duration_days)
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,))
+        if cursor.fetchone():
+            cursor.execute("UPDATE users SET is_premium = 1, premium_until = ? WHERE user_id = ?",
+                           (until.isoformat(), user_id))
+        else:
+            cursor.execute("INSERT INTO users (user_id, is_premium, premium_until) VALUES (?, 1, ?)",
+                           (user_id, until.isoformat()))
+        conn.commit()
+        print(f"✅ Premium активирован для {user_id} до {until} (MSK)")
+
 def is_premium(user_id: int) -> bool:
-    # Для админа (психолога) Premium всегда активен
-    if user_id == PSYCHOLOGIST_ID:
-        return True
-    
+    """Проверяет, активна ли Premium-подписка у пользователя (по московскому времени)"""
+    moscow_tz = pytz.timezone('Europe/Moscow')
+    now = datetime.now(moscow_tz)
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT is_premium, premium_until FROM users WHERE user_id = ?", (user_id,))
         row = cursor.fetchone()
-        if row and row[0] and row[1]:
-            premium_until = datetime.fromisoformat(row[1])
-            if premium_until > datetime.now():
+        if row and row[0]:
+            if row[1]:
+                premium_until = datetime.fromisoformat(row[1])
+                if premium_until > now:
+                    return True
+            else:
                 return True
         return False
 
 def get_all_premium_users() -> list:
+    moscow_tz = pytz.timezone('Europe/Moscow')
+    now = datetime.now(moscow_tz)
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT user_id FROM users WHERE is_premium = 1 AND premium_until > ?", (datetime.now().isoformat(),))
+        cursor.execute("SELECT user_id FROM users WHERE is_premium = 1 AND premium_until > ?", (now.isoformat(),))
         return [row[0] for row in cursor.fetchall()]
 
 def get_remaining_questions(user_id: int) -> int:
@@ -239,13 +259,6 @@ def increment_question_count(user_id: int) -> int:
             cursor.execute("INSERT INTO message_counts (user_id, count, last_reset_date) VALUES (?, ?, ?)",
                            (user_id, count, today_str))
     return FREE_QUESTIONS_PER_DAY - count
-
-def activate_premium(user_id: int, duration_days: int = 30):
-    until = datetime.now() + timedelta(days=duration_days)
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("UPDATE users SET is_premium = 1, premium_until = ? WHERE user_id = ?",
-                       (until.isoformat(), user_id))
 
 def was_forecast_sent_today(user_id: int) -> bool:
     today_str = datetime.now(pytz.timezone('Europe/Moscow')).strftime("%Y-%m-%d")
@@ -645,9 +658,11 @@ async def cmd_reset(message: types.Message, state: FSMContext):
     await message.answer("🔄 История нашего диалога очищена. Начинаем с чистого листа!", reply_markup=menu_keyboard)
     await state.set_state(Dialogue.chatting)
 
-# КОМАНДА ДЛЯ РУЧНОЙ АКТИВАЦИИ PREMIUM (без проверки для админа)
 @dp.message(Command("activate_premium"))
 async def force_activate_premium(message: types.Message):
+    if message.from_user.id != PSYCHOLOGIST_ID:
+        await message.answer("⛔ Только администратор может использовать эту команду.")
+        return
     user_id = message.from_user.id
     activate_premium(user_id, 30)
     await message.answer(
