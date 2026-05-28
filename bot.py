@@ -1474,7 +1474,14 @@ async def handle_book(callback: types.CallbackQuery, state: FSMContext):
         reply_markup=ReplyKeyboardRemove()
     )
     await state.set_state(Dialogue.waiting_for_contact)
-
+@dp.message(Command("activate_premium"))
+async def force_activate_premium(message: types.Message):
+    if message.from_user.id != PSYCHOLOGIST_ID:
+        await message.answer("⛔ Только администратор может использовать эту команду.")
+        return
+    user_id = message.from_user.id
+    activate_premium(user_id, 30)
+    await message.answer("✅ Premium активирован вручную! Теперь PDF‑отчёт должен работать.")
 @dp.callback_query(lambda c: c.data == "not_ready")
 async def handle_not_ready(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
