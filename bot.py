@@ -37,6 +37,7 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 PSYCHOLOGIST_ID = int(os.getenv("PSYCHOLOGIST_ID", 0))
+ADMIN_IDS = [int(id.strip()) for id in os.getenv("ADMIN_IDS", "").split(",") if id.strip()]
 SHEET_ID = os.getenv("SHEET_ID")
 GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")
 
@@ -953,7 +954,8 @@ async def cmd_reset(message: types.Message, state: FSMContext):
 
 @dp.message(Command("activate_premium"))
 async def force_activate_premium(message: types.Message):
-    if message.from_user.id != PSYCHOLOGIST_ID:
+    # Проверяем, есть ли пользователь в списке администраторов
+    if message.from_user.id not in ADMIN_IDS:
         await message.answer("⛔ Только администратор может использовать эту команду.")
         return
     user_id = message.from_user.id
