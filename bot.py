@@ -127,6 +127,13 @@ menu_keyboard = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
+# Клавиатура для отмены действия
+cancel_keyboard = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отменить действие", callback_data="cancel_action")]
+    ]
+)
+
 gender_keyboard = ReplyKeyboardMarkup(
     keyboard=[[KeyboardButton(text="👩 Женский"), KeyboardButton(text="👨 Мужской")]],
     resize_keyboard=True,
@@ -436,7 +443,6 @@ async def generate_pdf_report(user_id: int, partner_date: str = None) -> io.Byte
         fontName=font_name, fontSize=11, alignment=TA_CENTER, spaceAfter=8
     )
     
-    # ---- ТИТУЛЬНАЯ СТРАНИЦА ----
     story.append(Paragraph("✨ ПЕРСОНАЛЬНЫЙ НУМЕРОЛОГИЧЕСКИЙ ОТЧЁТ ✨", title_style))
     story.append(Spacer(1, 1*cm))
     safe_name = name if name else "друг"
@@ -449,7 +455,6 @@ async def generate_pdf_report(user_id: int, partner_date: str = None) -> io.Byte
     story.append(Paragraph("✨ Открывая себя — открываешь мир ✨", center_style))
     story.append(PageBreak())
     
-    # ---- 1. ЧИСЛО СУДЬБЫ (развёрнуто) ----
     fate_number, fate_desc = calculate_fate_number(birth_date, gender)
     story.append(Paragraph(f"🔮 1. ЧИСЛО СУДЬБЫ — {fate_number}", heading1_style))
     story.append(Paragraph(fate_desc, normal_style))
@@ -469,7 +474,6 @@ async def generate_pdf_report(user_id: int, partner_date: str = None) -> io.Byte
     story.append(Paragraph(f"✨ <b>Глубинная расшифровка:</b> {fate_details.get(fate_number, 'Уникальная личность с особенным путём.')}", normal_style))
     story.append(Spacer(1, 0.8*cm))
     
-    # ---- 2. ПО ЦИФРАМ ДНЯ РОЖДЕНИЯ ----
     day, month, year = map(int, birth_date.split('.'))
     story.append(Paragraph("🔢 2. ГЛУБИННАЯ РАСШИФРОВКА ДАТЫ РОЖДЕНИЯ", heading1_style))
     
@@ -518,7 +522,6 @@ async def generate_pdf_report(user_id: int, partner_date: str = None) -> io.Byte
     story.append(Paragraph(f"📌 <b>Год рождения ({year} → {year_total}):</b> {year_desc.get(year_total, 'Ваш год рождения определяет жизненный путь.')}", normal_style))
     story.append(Spacer(1, 0.8*cm))
     
-    # ---- 3. ПРОГНОЗ НА 2026 ГОД (развёрнутый) ----
     story.append(Paragraph("⭐ 3. ПРОГНОЗ НА 2026 ГОД", heading1_style))
     year_2026 = 2026
     total_2026 = day + month + year_2026
@@ -539,7 +542,6 @@ async def generate_pdf_report(user_id: int, partner_date: str = None) -> io.Byte
     story.append(Paragraph(forecasts_2026.get(total_2026, "Год перемен и новых возможностей."), normal_style))
     story.append(Spacer(1, 0.3*cm))
     
-    # Прогноз по сферам на 2026
     story.append(Paragraph("<b>🔮 Детальный прогноз по сферам жизни на 2026 год:</b>", heading3_style))
     love_text = "💕 <b>Любовь и отношения:</b> " + {
         1: "Год активного поиска. Вас ждут яркие знакомства и романтические приключения.",
@@ -583,7 +585,6 @@ async def generate_pdf_report(user_id: int, partner_date: str = None) -> io.Byte
     story.append(Paragraph(health_text, normal_style))
     story.append(Spacer(1, 0.8*cm))
     
-    # ---- 4. ПОМЕСЯЧНЫЙ ПРОГНОЗ (подробный) ----
     story.append(Paragraph("📅 4. ПОМЕСЯЧНЫЙ ПРОГНОЗ НА 2026 ГОД", heading1_style))
     monthly_details = [
         ("Январь", "🌟 <b>Новолуние 29.01</b> — время ставить цели. Энергия обновления, отличный месяц для новых начинаний и планирования. Карьерные успехи, финансовое планирование."),
@@ -604,7 +605,6 @@ async def generate_pdf_report(user_id: int, partner_date: str = None) -> io.Byte
         story.append(Spacer(1, 0.2*cm))
     story.append(Spacer(1, 0.5*cm))
     
-    # ---- 5. СОВМЕСТИМОСТЬ (развёрнутая) ----
     if partner_date:
         comp = get_compatibility(birth_date, partner_date, premium=True)
         story.append(Paragraph("💕 5. ДЕТАЛЬНЫЙ АНАЛИЗ СОВМЕСТИМОСТИ", heading1_style))
@@ -621,7 +621,6 @@ async def generate_pdf_report(user_id: int, partner_date: str = None) -> io.Byte
         story.append(Paragraph("Укажите дату рождения партнёра при заказе отчёта, и вы получите детальный разбор вашей пары: сильные стороны, точки роста, кармические задачи, совместимость в любви, деньгах и дружбе, а также прогноз развития отношений на 1, 3 и 5 лет.", normal_style))
         story.append(Spacer(1, 0.5*cm))
     
-    # ---- 6. РАСКЛАД ТАРО «КЕЛЬТСКИЙ КРЕСТ» (10 карт) ----
     story.append(Paragraph("🎴 6. РАСКЛАД ТАРО «КЕЛЬТСКИЙ КРЕСТ»", heading1_style))
     story.append(Paragraph("Этот древний расклад покажет ваш путь на ближайшее время.", normal_style))
     story.append(Spacer(1, 0.3*cm))
@@ -643,7 +642,6 @@ async def generate_pdf_report(user_id: int, partner_date: str = None) -> io.Byte
         story.append(Spacer(1, 0.2*cm))
     story.append(Spacer(1, 0.5*cm))
     
-    # ---- 7. ЕЖЕДНЕВНЫЕ АФФИРМАЦИИ (развёрнутые) ----
     story.append(Paragraph("✨ 7. ЕЖЕДНЕВНЫЕ АФФИРМАЦИИ НА МЕСЯЦ", heading1_style))
     affirmations = [
         "Я открыта новым возможностям. Вселенная заботится обо мне.",
@@ -667,7 +665,6 @@ async def generate_pdf_report(user_id: int, partner_date: str = None) -> io.Byte
         story.append(Spacer(1, 0.2*cm))
     story.append(Spacer(1, 0.5*cm))
     
-    # ---- 8. ЛУННЫЙ КАЛЕНДАРЬ С РИТУАЛАМИ ----
     story.append(Paragraph("🌙 8. ЛУННЫЙ КАЛЕНДАРЬ И РИТУАЛЫ", heading1_style))
     story.append(Paragraph("🌑 <b>Новолуние</b> — время начинать новое, загадывать желания, ставить цели. <b>Ритуал:</b> Напишите список желаний и зажгите свечу.", normal_style))
     story.append(Paragraph("🌓 <b>Первая четверть</b> — время действовать, принимать решения, двигаться к цели. <b>Ритуал:</b> Сделайте первый шаг к своей мечте сегодня.", normal_style))
@@ -675,7 +672,6 @@ async def generate_pdf_report(user_id: int, partner_date: str = None) -> io.Byte
     story.append(Paragraph("🌗 <b>Последняя четверть</b> — время завершать дела, избавляться от ненужного. <b>Ритуал:</b> Разберите завалы, выбросите старое.", normal_style))
     story.append(Spacer(1, 0.5*cm))
     
-    # ---- 9. ПЕРСОНАЛЬНЫЕ РЕКОМЕНДАЦИИ ----
     story.append(Paragraph("💫 9. ПЕРСОНАЛЬНЫЕ РЕКОМЕНДАЦИИ НА ГОД", heading1_style))
     story.append(Paragraph("✨ <b>Доверяйте своей интуиции</b> — она редко ошибается. Ваш внутренний голос — лучший советчик.", normal_style))
     story.append(Paragraph("✨ <b>Уделяйте время отдыху и восстановлению</b> — ваша энергия главный ресурс. Не переутомляйтесь.", normal_style))
@@ -887,6 +883,17 @@ def save_to_google_sheets(user_id: int, username: str, problem: str, direction: 
 
 # ---------------------- ОБРАБОТЧИКИ ----------------------
 
+@dp.callback_query(lambda c: c.data == "cancel_action")
+async def cancel_action(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.clear()
+    await callback.message.edit_text("❌ Действие отменено.")
+    await callback.message.answer(
+        "✨ Возвращаемся в главное меню. Чем могу помочь?",
+        reply_markup=menu_keyboard
+    )
+    await state.set_state(Dialogue.chatting)
+
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
@@ -996,11 +1003,18 @@ async def fate_number_start(message: types.Message, state: FSMContext):
         "🔮 *Расчёт числа судьбы*\n\n"
         "Введи свою дату рождения в формате:\n`ДД.ММ.ГГГГ`\n\n"
         "🌙 *Пример:* 15.05.1990",
-        parse_mode="Markdown"
+        parse_mode="Markdown",
+        reply_markup=cancel_keyboard
     )
 
 @dp.message(StateFilter(Dialogue.waiting_for_birthdate))
 async def process_fate_number(message: types.Message, state: FSMContext):
+    if message.text == "/cancel":
+        await state.clear()
+        await message.answer("❌ Действие отменено.", reply_markup=menu_keyboard)
+        await state.set_state(Dialogue.chatting)
+        return
+    
     if not re.match(r'^\d{2}\.\d{2}\.\d{4}$', message.text):
         await message.answer("❌ Неверный формат. Введи как `ДД.ММ.ГГГГ`, например 15.05.1990", reply_markup=menu_keyboard, parse_mode="Markdown")
         await state.set_state(Dialogue.chatting)
@@ -1026,11 +1040,18 @@ async def horoscope_start(message: types.Message, state: FSMContext):
         "♈ Овен, ♉ Телец, ♊ Близнецы, ♋ Рак, ♌ Лев, ♍ Дева,\n"
         "♎ Весы, ♏ Скорпион, ♐ Стрелец, ♑ Козерог, ♒ Водолей, ♓ Рыбы\n\n"
         "✨ Или просто отправь дату: `ДД.ММ.ГГГГ`",
-        parse_mode="Markdown"
+        parse_mode="Markdown",
+        reply_markup=cancel_keyboard
     )
 
 @dp.message(StateFilter(Dialogue.waiting_for_zodiac))
 async def process_horoscope(message: types.Message, state: FSMContext):
+    if message.text == "/cancel":
+        await state.clear()
+        await message.answer("❌ Действие отменено.", reply_markup=menu_keyboard)
+        await state.set_state(Dialogue.chatting)
+        return
+    
     text = message.text.strip()
     zodiac_sign = None
     
@@ -1161,11 +1182,18 @@ async def compatibility_start(message: types.Message, state: FSMContext):
         "💕 *Расчёт совместимости*\n\n"
         "Введи *первую* дату рождения в формате:\n`ДД.ММ.ГГГГ`\n\n"
         "🌙 *Пример:* 15.05.1990",
-        parse_mode="Markdown"
+        parse_mode="Markdown",
+        reply_markup=cancel_keyboard
     )
 
 @dp.message(StateFilter(Dialogue.waiting_for_birthdate_comp))
 async def process_compatibility_first(message: types.Message, state: FSMContext):
+    if message.text == "/cancel":
+        await state.clear()
+        await message.answer("❌ Действие отменено.", reply_markup=menu_keyboard)
+        await state.set_state(Dialogue.chatting)
+        return
+    
     if not re.match(r'^\d{2}\.\d{2}\.\d{4}$', message.text):
         await message.answer("❌ Неверный формат. Введи как `ДД.ММ.ГГГГ`", reply_markup=menu_keyboard, parse_mode="Markdown")
         await state.set_state(Dialogue.chatting)
@@ -1175,11 +1203,18 @@ async def process_compatibility_first(message: types.Message, state: FSMContext)
     await message.answer(
         "💕 *Расчёт совместимости*\n\n"
         "Теперь введи *вторую* дату рождения:\n`ДД.ММ.ГГГГ`",
-        parse_mode="Markdown"
+        parse_mode="Markdown",
+        reply_markup=cancel_keyboard
     )
 
 @dp.message(StateFilter(Dialogue.waiting_for_birthdate_comp2))
 async def process_compatibility_second(message: types.Message, state: FSMContext):
+    if message.text == "/cancel":
+        await state.clear()
+        await message.answer("❌ Действие отменено.", reply_markup=menu_keyboard)
+        await state.set_state(Dialogue.chatting)
+        return
+    
     if not re.match(r'^\d{2}\.\d{2}\.\d{4}$', message.text):
         await message.answer("❌ Неверный формат. Введи как `ДД.ММ.ГГГГ`", reply_markup=menu_keyboard, parse_mode="Markdown")
         await state.set_state(Dialogue.chatting)
@@ -1370,14 +1405,14 @@ async def book_psychologist(message: types.Message, state: FSMContext):
         "Оставь свой контакт (@username или номер телефона), и психолог Дарья свяжется с тобой.\n\n"
         "✨ Всё конфиденциально, ты в безопасности.\n\n"
         "Нажми /cancel, чтобы отменить запись.",
-        reply_markup=ReplyKeyboardRemove(),
-        parse_mode="Markdown"
+        parse_mode="Markdown",
+        reply_markup=cancel_keyboard
     )
     await state.set_state(Dialogue.waiting_for_contact)
 
 @dp.message(StateFilter(Dialogue.waiting_for_contact))
 async def process_contact(message: types.Message, state: FSMContext):
-    if message.text.startswith("/cancel"):
+    if message.text == "/cancel":
         await state.clear()
         await message.answer("❌ Запись отменена.", reply_markup=menu_keyboard)
         await state.set_state(Dialogue.chatting)
@@ -1677,16 +1712,24 @@ async def pdf_with_partner(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.answer(
         "💕 *Введи дату рождения партнёра* 💕\n\n"
         "В формате `ДД.ММ.ГГГГ`, например: 15.05.1990",
-        parse_mode="Markdown"
+        parse_mode="Markdown",
+        reply_markup=cancel_keyboard
     )
     await state.set_state(Dialogue.waiting_for_partner_date)
 
 @dp.message(StateFilter(Dialogue.waiting_for_partner_date))
 async def process_partner_date(message: types.Message, state: FSMContext):
+    if message.text == "/cancel":
+        await state.clear()
+        await message.answer("❌ Действие отменено.", reply_markup=menu_keyboard)
+        await state.set_state(Dialogue.chatting)
+        return
+    
     if not re.match(r'^\d{2}\.\d{2}\.\d{4}$', message.text):
         await message.answer("❌ Неверный формат. Введи как `ДД.ММ.ГГГГ`", parse_mode="Markdown", reply_markup=menu_keyboard)
         await state.set_state(Dialogue.chatting)
         return
+    
     partner_date = message.text
     user_id = message.from_user.id
     
