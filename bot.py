@@ -113,7 +113,6 @@ class Dialogue(StatesGroup):
     waiting_for_zodiac = State()
     waiting_for_partner_date = State()
 
-# ========== КЛАВИАТУРЫ ==========
 menu_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="ℹ️ Помощь"), KeyboardButton(text="🗑 Очистить диалог")],
@@ -145,7 +144,6 @@ partner_keyboard = InlineKeyboardMarkup(
     ]
 )
 
-# ========== ФУНКЦИИ БАЗЫ ДАННЫХ ==========
 def get_user_gender(user_id: int) -> str:
     with get_db() as conn:
         cursor = conn.cursor()
@@ -588,7 +586,7 @@ def save_to_google_sheets(user_id: int, username: str, problem: str, direction: 
         print(f"❌ Ошибка: {e}")
         return False
 
-# ========== ХЕНДЛЕРЫ КОМАНД И КНОПОК (С ПРАВИЛЬНЫМ ПОРЯДКОМ) ==========
+# ---------------------- ОБРАБОТЧИКИ КОМАНД И КНОПОК ----------------------
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
@@ -1333,7 +1331,7 @@ async def process_partner_date(message: types.Message, state: FSMContext):
         reply_markup=menu_keyboard
     )
 
-# ========== ОСНОВНОЙ ДИАЛОГ (ДОЛЖЕН БЫТЬ ПОСЛЕ ВСЕХ СПЕЦИАЛЬНЫХ ОБРАБОТЧИКОВ) ==========
+# ---------------------- ОСНОВНОЙ ДИАЛОГ (ВСЕГДА ПОСЛЕДНИЙ) ----------------------
 @dp.message(Dialogue.chatting)
 async def chat_with_ai(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
@@ -1374,12 +1372,10 @@ async def chat_with_ai(message: types.Message, state: FSMContext):
     if user_id not in user_problems:
         user_problems[user_id] = {"problem": user_text, "direction": detect_direction(user_text)}
     
-    # Пытаемся получить ответ от Groq
     try:
         history = get_history(user_id)
         history.append({"role": "user", "content": user_text})
         
-        # Если groq_client не инициализирован (нет ключа), возвращаем сообщение об ошибке
         if not groq_client:
             answer = "🌙 *ИИ-ассистент временно недоступен.* Пожалуйста, используй кнопки меню или попробуй позже. ✨"
         else:
