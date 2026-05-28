@@ -168,6 +168,10 @@ def get_user_name(user_id: int) -> str:
         row = cursor.fetchone()
         if row and row[0]:
             return row[0]
+        # Если имени нет, возвращаем "друг" с учётом пола
+        gender = get_user_gender(user_id)
+        if gender == "female":
+            return "подруга"
         return "друг"
 
 def get_user_birthdate(user_id: int) -> str:
@@ -390,7 +394,7 @@ async def generate_pdf_report(user_id: int, partner_date: str = None) -> io.Byte
     gender = get_user_gender(user_id)
     name = get_user_name(user_id)
     if not name:
-        name = "друг"
+        name = "друг" if gender == "male" else "подруга"
     birth_date = get_user_birthdate(user_id)
     if not birth_date:
         birth_date = "01.01.1990"
@@ -445,7 +449,7 @@ async def generate_pdf_report(user_id: int, partner_date: str = None) -> io.Byte
     
     story.append(Paragraph("✨ ПЕРСОНАЛЬНЫЙ НУМЕРОЛОГИЧЕСКИЙ ОТЧЁТ ✨", title_style))
     story.append(Spacer(1, 1*cm))
-    safe_name = name if name else "друг"
+    safe_name = name if name else ("друг" if gender == "male" else "подруга")
     story.append(Paragraph(f"<font size=20>для {safe_name.upper()}</font>", title_style))
     story.append(Spacer(1, 2*cm))
     story.append(Paragraph(f"📅 <b>Дата рождения:</b> {birth_date}", normal_style))
@@ -897,29 +901,76 @@ async def cancel_action(callback: types.CallbackQuery, state: FSMContext):
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
-    await state.clear()
-    if user_id in user_history:
-        del user_history[user_id]
-    if user_id in user_problems:
-        del user_problems[user_id]
     
+    # Проверяем, есть ли уже пол в базе
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT gender FROM users WHERE user_id = ?", (user_id,))
+        row = cursor.fetchone()
+    
+    # Если пол уже выбран — сразу в диалог
+    if row and row[0]:
+        await state.clear()
+        if user_id in user_history:
+            del user_history[user_id]
+        if user_id in user_problems:
+            del user_problems[user_id]
+        
+        remaining = get_remaining_questions(user_id)
+        status = "💎 Premium" if is_premium(user_id) else f"📊 {remaining}/{FREE_QUESTIONS_PER_DAY} вопросов сегодня"
+        name = get_user_name(user_id)
+        
+        await message.answer(
+            f"✨ *С возвращением, {name}!* ✨\n\n"
+            f"🌸 Я {PSYCHOLOGIST_NAME}, твой персональный гид.\n\n"
+            f"📊 Твой статус: {status}\n\n"
+            f"👇 *Напиши мне или используй кнопки меню!*",
+            reply_markup=menu_keyboard,
+            parse_mode="Markdown"
+        )
+        await state.set_state(Dialogue.chatting)
+        return
+    
+    # Если пол не выбран — спрашиваем
+    await state.set_state(Dialogue.choosing_gender)
+    await message.answer(
+        f"✨ *Привет, {message.from_user.first_name or 'дорогой друг'}!* ✨\n\n"
+        f"🌸 Я {PSYCHOLOGIST_NAME}, твой персональный гид в мире самопознания.\n\n"
+        f"💫 Прежде чем мы начнём, скажи, как к тебе обращаться?\n\n"
+        f"👇 **Выбери свой пол:**",
+        reply_markup=gender_keyboard,
+        parse_mode="Markdown"
+    )
+
+@dp.message(StateFilter(Dialogue.choosing_gender))
+async def process_gender(message: types.Message, state: FSMContext):
+    user_id = message.from_user.id
+    text = message.text.lower()
+    
+    if "жен" in text or text == "👩 женский":
+        gender = "female"
+        greeting = "👩 Рада знакомству, прекрасная дама!"
+        name = message.from_user.first_name or "подруга"
+    elif "муж" in text or text == "👨 мужской":
+        gender = "male"
+        greeting = "👨 Рада знакомству, благородный рыцарь!"
+        name = message.from_user.first_name or "друг"
+    else:
+        await message.answer("Пожалуйста, выбери свой пол, нажав на кнопку ниже 👇", reply_markup=gender_keyboard)
+        return
+    
+    # Сохраняем пол и имя пользователя
+    set_user_gender(user_id, message.from_user.username or "", gender, message.from_user.first_name or name)
+    
+    await state.clear()
     remaining = get_remaining_questions(user_id)
-    status = "💎 Premium" if is_premium(user_id) else f"📊 {remaining}/{FREE_QUESTIONS_PER_DAY} вопросов сегодня"
     
     await message.answer(
-        f"✨ *Добро пожаловать, {message.from_user.first_name or 'дорогой друг'}!* ✨\n\n"
-        f"🌸 Я {PSYCHOLOGIST_NAME}, твой персональный гид в мире самопознания, магии чисел и мудрости Таро.\n\n"
-        f"📊 Твой статус: {status}\n\n"
-        f"💫 *Что я умею:*\n"
-        f"🔮 **Число судьбы** — раскрою твои таланты и жизненный путь\n"
-        f"⭐ **Гороскоп** — подскажу, что приготовили звёзды на сегодня\n"
-        f"♊ **Совместимость** — расскажу о гармонии между двумя сердцами\n"
-        f"🎴 **Карта дня Таро** — дам мудрый совет от древних арканов\n"
-        f"📞 **Запись к психологу** — живая поддержка\n"
-        f"📊 **Демо-отчёт** — пример моих возможностей\n"
-        f"📄 **PDF-отчёт** — полный разбор твоей судьбы\n"
-        f"⭐ **Подписка Premium** — открой все магические возможности\n\n"
-        f"👇 *Напиши мне или используй кнопки меню!*",
+        f"{greeting}\n\n"
+        f"🌸 Я {PSYCHOLOGIST_NAME}, твой персональный помощник.\n"
+        f"📊 Лимит сегодня: {remaining}/{FREE_QUESTIONS_PER_DAY} вопросов.\n"
+        f"⭐ Подписка Premium снимает лимиты и открывает расширенные функции.\n\n"
+        f"👇 **Используй кнопки меню или просто напиши мне!**",
         reply_markup=menu_keyboard,
         parse_mode="Markdown"
     )
