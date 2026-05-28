@@ -158,7 +158,9 @@ def get_user_name(user_id: int) -> str:
         cursor = conn.cursor()
         cursor.execute("SELECT name FROM users WHERE user_id = ?", (user_id,))
         row = cursor.fetchone()
-        return row[0] if row else "друг"
+        if row and row[0]:
+            return row[0]
+        return "друг"
 
 def get_user_birthdate(user_id: int) -> str:
     with get_db() as conn:
@@ -379,6 +381,8 @@ async def generate_pdf_report(user_id: int, partner_date: str = None) -> io.Byte
     
     gender = get_user_gender(user_id)
     name = get_user_name(user_id)
+    if not name:
+        name = "друг"
     birth_date = get_user_birthdate(user_id)
     if not birth_date:
         birth_date = "01.01.1990"
@@ -400,10 +404,9 @@ async def generate_pdf_report(user_id: int, partner_date: str = None) -> io.Byte
         pdfmetrics.registerFont(TTFont('Roboto-Bold', 'Roboto.ttf'))
         font_name = 'Roboto'
     except:
-        # Если шрифт не найден, используем стандартный
         font_name = 'Helvetica'
     
-    # Создаём стили
+    # Стили
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle(
         'Title', parent=styles['Title'],
@@ -432,7 +435,8 @@ async def generate_pdf_report(user_id: int, partner_date: str = None) -> io.Byte
     # ---- ТИТУЛЬНАЯ СТРАНИЦА ----
     story.append(Paragraph("✨ ПЕРСОНАЛЬНЫЙ НУМЕРОЛОГИЧЕСКИЙ ОТЧЁТ ✨", title_style))
     story.append(Spacer(1, 0.5*cm))
-    story.append(Paragraph(f"<font size=16>для {name.upper()}</font>", title_style))
+    safe_name = name if name else "друг"
+    story.append(Paragraph(f"<font size=16>для {safe_name.upper()}</font>", title_style))
     story.append(Spacer(1, 1*cm))
     story.append(Paragraph(f"📅 <b>Дата рождения:</b> {birth_date}", normal_style))
     story.append(Paragraph(f"👤 <b>Пол:</b> {'Женский' if gender == 'female' else 'Мужской'}", normal_style))
@@ -520,25 +524,25 @@ async def generate_pdf_report(user_id: int, partner_date: str = None) -> io.Byte
     # ---- 4. ПОМЕСЯЧНЫЙ ПРОГНОЗ ----
     story.append(Paragraph("📅 4. ПОМЕСЯЧНЫЙ ПРОГНОЗ НА 2026 ГОД", heading1_style))
     monthly = [
-        ("Январь", 1, "🌟 Месяц новых начинаний. Ставьте цели и действуйте смело!"),
-        ("Февраль", 2, "💕 Месяц любви и гармонии. Укрепляйте отношения с близкими."),
-        ("Март", 3, "🎨 Месяц творчества. Займитесь тем, что приносит радость."),
-        ("Апрель", 4, "🏗️ Месяц труда. Работайте над долгосрочными проектами."),
-        ("Май", 5, "✈️ Месяц перемен. Путешествия и новые впечатления."),
-        ("Июнь", 6, "🏡 Месяц семьи. Время заботы о доме и близких."),
-        ("Июль", 7, "📚 Месяц мудрости. Учитесь и анализируйте."),
-        ("Август", 8, "💼 Месяц силы. Карьерные успехи и финансовая удача."),
-        ("Сентябрь", 9, "🌅 Месяц завершения. Подводите итоги."),
-        ("Октябрь", 1, "🌟 Новый цикл. Новые возможности."),
-        ("Ноябрь", 2, "🤝 Месяц партнёрства. Ищите союзников."),
-        ("Декабрь", 3, "🎄 Месяц радости. Наслаждайтесь праздниками и итогами года.")
+        ("Январь", "🌟 Месяц новых начинаний. Ставьте цели и действуйте смело!"),
+        ("Февраль", "💕 Месяц любви и гармонии. Укрепляйте отношения с близкими."),
+        ("Март", "🎨 Месяц творчества. Займитесь тем, что приносит радость."),
+        ("Апрель", "🏗️ Месяц труда. Работайте над долгосрочными проектами."),
+        ("Май", "✈️ Месяц перемен. Путешествия и новые впечатления."),
+        ("Июнь", "🏡 Месяц семьи. Время заботы о доме и близких."),
+        ("Июль", "📚 Месяц мудрости. Учитесь и анализируйте."),
+        ("Август", "💼 Месяц силы. Карьерные успехи и финансовая удача."),
+        ("Сентябрь", "🌅 Месяц завершения. Подводите итоги."),
+        ("Октябрь", "🌟 Новый цикл. Новые возможности."),
+        ("Ноябрь", "🤝 Месяц партнёрства. Ищите союзников."),
+        ("Декабрь", "🎄 Месяц радости. Наслаждайтесь праздниками и итогами года.")
     ]
-    for month_name, month_num, month_text in monthly:
+    for month_name, month_text in monthly:
         story.append(Paragraph(f"<b>{month_name}:</b> {month_text}", normal_style))
         story.append(Spacer(1, 0.2*cm))
     story.append(Spacer(1, 0.5*cm))
     
-    # ---- 5. СОВМЕСТИМОСТЬ С ПАРТНЁРОМ (если указана) ----
+    # ---- 5. СОВМЕСТИМОСТЬ ----
     if partner_date:
         comp = get_compatibility(birth_date, partner_date, premium=True)
         story.append(Paragraph("💕 5. АНАЛИЗ СОВМЕСТИМОСТИ", heading1_style))
@@ -554,7 +558,7 @@ async def generate_pdf_report(user_id: int, partner_date: str = None) -> io.Byte
         story.append(Paragraph("🔓 Полный анализ совместимости доступен по подписке Premium. Укажите дату рождения партнёра при заказе отчёта.", normal_style))
         story.append(Spacer(1, 0.5*cm))
     
-    # ---- 6. АФФИРМАЦИИ НА МЕСЯЦ ----
+    # ---- 6. АФФИРМАЦИИ ----
     story.append(Paragraph("✨ 6. ЕЖЕДНЕВНЫЕ АФФИРМАЦИИ", heading1_style))
     affirmations = [
         "Я открыта новым возможностям. Вселенная заботится обо мне.",
@@ -564,12 +568,10 @@ async def generate_pdf_report(user_id: int, partner_date: str = None) -> io.Byte
         "Я люблю и принимаю себя целиком.",
         "Каждый день я становлюсь сильнее.",
         "Я достойна всего самого лучшего.",
-        "Мои мечты сбываются в нужное время.",
-        "Я благодарна за всё, что имею.",
-        "Я выбираю радость каждый день."
+        "Мои мечты сбываются в нужное время."
     ]
-    for i, aff in enumerate(affirmations[:datetime.now().day], 1):
-        story.append(Paragraph(f"<b>{i} {datetime.now().strftime('%d.%m')}:</b> «{aff}»", normal_style))
+    for i, aff in enumerate(affirmations, 1):
+        story.append(Paragraph(f"<b>{i}:</b> «{aff}»", normal_style))
         story.append(Spacer(1, 0.2*cm))
     story.append(Spacer(1, 0.5*cm))
     
@@ -587,7 +589,6 @@ async def generate_pdf_report(user_id: int, partner_date: str = None) -> io.Byte
     story.append(Paragraph("✨ Уделяйте время отдыху и восстановлению. Ваша энергия — главный ресурс.", normal_style))
     story.append(Paragraph("✨ Не бойтесь просить о помощи, когда она нужна. Вы не одиноки.", normal_style))
     story.append(Paragraph("✨ Благодарите себя и других каждый день. Благодарность привлекает чудеса.", normal_style))
-    story.append(Paragraph("✨ Помните: ваша жизнь — в ваших руках. Меняйте мысли — меняется реальность.", normal_style))
     story.append(Spacer(1, 0.5*cm))
     
     story.append(Paragraph("🌿 <b>Благодарим за доверие! Берегите себя и будьте счастливы.</b> 💕", center_style))
