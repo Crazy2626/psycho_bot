@@ -586,7 +586,7 @@ def save_to_google_sheets(user_id: int, username: str, problem: str, direction: 
         print(f"❌ Ошибка: {e}")
         return False
 
-# ---------------------- ОБРАБОТЧИКИ КОМАНД И КНОПОК ----------------------
+# ---------------------- ОСНОВНЫЕ ОБРАБОТЧИКИ ----------------------
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
@@ -849,7 +849,7 @@ async def process_compatibility_first(message: types.Message, state: FSMContext)
     await state.set_state(Dialogue.waiting_for_birthdate_comp2)
     await message.answer(
         "💕 *Расчёт совместимости*\n\n"
-        "Введи *вторую* дату рождения:\n`ДД.ММ.ГГГГ`",
+        "Теперь введи *вторую* дату рождения:\n`ДД.ММ.ГГГГ`",
         parse_mode="Markdown"
     )
 
@@ -862,7 +862,7 @@ async def process_compatibility_second(message: types.Message, state: FSMContext
     data = await state.get_data()
     date1 = data.get('date1')
     if not date1:
-        await message.answer("❌ Ошибка. Начни заново.", reply_markup=menu_keyboard)
+        await message.answer("❌ Ошибка. Начни заново, нажав кнопку '♊ Совместимость'.", reply_markup=menu_keyboard)
         await state.clear()
         return
     
@@ -883,6 +883,7 @@ async def process_compatibility_second(message: types.Message, state: FSMContext
             parse_mode="Markdown",
             reply_markup=menu_keyboard
         )
+    await state.clear()
     await state.set_state(Dialogue.chatting)
 
 @dp.message(F.text == "🎴 Карта дня Таро")
@@ -1331,7 +1332,7 @@ async def process_partner_date(message: types.Message, state: FSMContext):
         reply_markup=menu_keyboard
     )
 
-# ---------------------- ОСНОВНОЙ ДИАЛОГ (ВСЕГДА ПОСЛЕДНИЙ) ----------------------
+# ---------------------- ОСНОВНОЙ ДИАЛОГ (ПОСЛЕДНИЙ) ----------------------
 @dp.message(Dialogue.chatting)
 async def chat_with_ai(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
