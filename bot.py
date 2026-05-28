@@ -97,10 +97,8 @@ def init_db():
             )
         ''')
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS notifications (
+            CREATE TABLE IF NOT EXISTS daily_forecast_sent (
                 user_id INTEGER PRIMARY KEY,
-                notification_time TEXT,
-                is_enabled BOOLEAN DEFAULT 1,
                 last_sent_date TEXT
             )
         ''')
@@ -117,7 +115,6 @@ class Dialogue(StatesGroup):
     waiting_for_birthdate_comp2 = State()
     waiting_for_zodiac = State()
     waiting_for_partner_date = State()
-    waiting_for_notification_time = State()
 
 # ========== КЛАВИАТУРЫ ==========
 menu_keyboard = ReplyKeyboardMarkup(
@@ -126,8 +123,7 @@ menu_keyboard = ReplyKeyboardMarkup(
         [KeyboardButton(text="🔮 Число судьбы"), KeyboardButton(text="⭐ Гороскоп")],
         [KeyboardButton(text="♊ Совместимость"), KeyboardButton(text="🎴 Карта дня Таро")],
         [KeyboardButton(text="📞 Запись к психологу"), KeyboardButton(text="⭐ Подписка Premium")],
-        [KeyboardButton(text="📊 Демо-отчёт"), KeyboardButton(text="📄 Получить PDF-отчёт")],
-        [KeyboardButton(text="🔔 Настроить уведомления"), KeyboardButton(text="⏰ Тестовое уведомление")]
+        [KeyboardButton(text="📊 Демо-отчёт"), KeyboardButton(text="📄 Получить PDF-отчёт")]
     ],
     resize_keyboard=True
 )
@@ -198,6 +194,12 @@ def is_premium(user_id: int) -> bool:
                 return True
         return False
 
+def get_all_premium_users() -> list:
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT user_id FROM users WHERE is_premium = 1 AND premium_until > ?", (datetime.now().isoformat(),))
+        return [row[0] for row in cursor.fetchall()]
+
 def get_remaining_questions(user_id: int) -> int:
     if is_premium(user_id):
         return 999
@@ -246,38 +248,20 @@ def activate_premium(user_id: int, duration_days: int = 30):
         cursor.execute("UPDATE users SET is_premium = 1, premium_until = ? WHERE user_id = ?",
                        (until.isoformat(), user_id))
 
-def save_notification_settings(user_id: int, time_str: str, enabled: bool = True):
+def was_forecast_sent_today(user_id: int) -> bool:
+    today_str = datetime.now().strftime("%Y-%m-%d")
     with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute('''
-            INSERT OR REPLACE INTO notifications (user_id, notification_time, is_enabled)
-            VALUES (?, ?, ?)
-        ''', (user_id, time_str, enabled))
-
-def get_notification_settings(user_id: int):
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT notification_time, is_enabled FROM notifications WHERE user_id = ?", (user_id,))
-        row = cursor.fetchone()
-        return row if row else (None, False)
-
-def get_all_users_with_notifications():
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT user_id, notification_time FROM notifications WHERE is_enabled = 1")
-        return cursor.fetchall()
-
-def mark_notification_sent(user_id: int, date_str: str):
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("UPDATE notifications SET last_sent_date = ? WHERE user_id = ?", (date_str, user_id))
-
-def was_notification_sent_today(user_id: int, today_str: str) -> bool:
-    with get_db() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT last_sent_date FROM notifications WHERE user_id = ?", (user_id,))
+        cursor.execute("SELECT last_sent_date FROM daily_forecast_sent WHERE user_id = ?", (user_id,))
         row = cursor.fetchone()
         return row and row[0] == today_str
+
+def mark_forecast_sent(user_id: int):
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    with get_db() as conn:
+        cursor = conn.cursor()
+        cursor.execute("INSERT OR REPLACE INTO daily_forecast_sent (user_id, last_sent_date) VALUES (?, ?)",
+                       (user_id, today_str))
 
 # ========== ОСНОВНЫЕ ФУНКЦИИ ==========
 def get_zodiac_sign(day: int, month: int) -> str:
@@ -403,12 +387,11 @@ async def generate_pdf_report(user_id: int, partner_date: str = None) -> io.Byte
     buffer.seek(0)
     return buffer
 
-# ========== ЕЖЕДНЕВНЫЕ УВЕДОМЛЕНИЯ ==========
+# ========== ЕЖЕДНЕВНЫЕ УТРЕННИЕ ОТЧЁТЫ ДЛЯ PREMIUM ==========
 async def generate_daily_forecast(user_id: int) -> str:
     gender = get_user_gender(user_id)
     name = get_user_name(user_id)
     birth_date = get_user_birthdate(user_id)
-    is_prem = is_premium(user_id)
     
     today = datetime.now()
     day_number = today.day + today.month
@@ -484,35 +467,37 @@ async def generate_daily_forecast(user_id: int) -> str:
 
 ✨ **Аффирмация дня**
 {affirmation}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+💎 У вас активна Premium-подписка!
+📄 Полный PDF-отчёт доступен в меню
+━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
-    if is_prem:
-        text += f"\n💎 У вас осталось {get_remaining_questions(user_id)} вопросов. Полный PDF-отчёт в меню!"
-    else:
-        text += f"\n⭐ Подписка Premium за 99 Stars/мес даёт безлимитные вопросы и PDF-отчёт!"
-    
     return text
 
-# ========== ФОНОВАЯ ЗАДАЧА ==========
-async def send_daily_notifications():
+# ========== ФОНОВАЯ ЗАДАЧА ДЛЯ ОТПРАВКИ В 8:00 ==========
+async def send_daily_premium_forecasts():
+    """Каждый день в 8:00 отправляет прогнозы всем Premium-пользователям"""
     while True:
         now = datetime.now()
-        current_time = now.strftime("%H:%M")
-        today_str = now.strftime("%Y-%m-%d")
-        
-        users = get_all_users_with_notifications()
-        
-        for user_id, notify_time in users:
-            if notify_time == current_time:
-                if not was_notification_sent_today(user_id, today_str):
+        # Проверяем, что сейчас 8:00 утра
+        if now.hour == 8 and now.minute == 0:
+            users = get_all_premium_users()
+            for user_id in users:
+                # Проверяем, не отправляли ли уже сегодня
+                if not was_forecast_sent_today(user_id):
                     try:
                         forecast = await generate_daily_forecast(user_id)
                         await bot.send_message(user_id, forecast, parse_mode="Markdown")
-                        mark_notification_sent(user_id, today_str)
-                        print(f"📬 Уведомление отправлено {user_id} в {current_time}")
+                        mark_forecast_sent(user_id)
+                        print(f"📬 Утренний отчёт отправлен {user_id}")
+                        # Небольшая задержка, чтобы не перегружать API
+                        await asyncio.sleep(1)
                     except Exception as e:
-                        print(f"❌ Ошибка {user_id}: {e}")
-        
-        await asyncio.sleep(60)
+                        print(f"❌ Ошибка отправки {user_id}: {e}")
+            # Ждём до следующего часа, чтобы не отправлять повторно в этом часе
+            await asyncio.sleep(60)
+        await asyncio.sleep(30)
 
 # ========== ИСТОРИЯ ДИАЛОГОВ ==========
 user_history = {}
@@ -648,8 +633,8 @@ async def menu_help(message: types.Message):
     await message.answer(
         f"📖 **Что я умею?**\n\n📊 Осталось вопросов: {remaining}/{FREE_QUESTIONS_PER_DAY}\n\n"
         f"💬 Просто напиши\n🔮 Число судьбы\n⭐ Гороскоп\n♊ Совместимость\n🎴 Карта дня Таро\n"
-        f"📞 Запись к психологу\n📊 Демо-отчёт\n📄 PDF-отчёт (Premium)\n⭐ Подписка Premium\n"
-        f"🔔 Настроить уведомления\n\n🗑 /reset\n❌ /cancel",
+        f"📞 Запись к психологу\n📊 Демо-отчёт\n📄 PDF-отчёт (Premium)\n⭐ Подписка Premium\n\n"
+        f"🗑 /reset\n❌ /cancel",
         reply_markup=menu_keyboard
     )
 
@@ -776,12 +761,12 @@ async def process_contact(message: types.Message, state: FSMContext):
 @dp.message(F.text == "⭐ Подписка Premium")
 async def show_premium_info(message: types.Message):
     if is_premium(message.from_user.id):
-        await message.answer("💎 Premium активна! Спасибо за поддержку!", reply_markup=menu_keyboard)
+        await message.answer("💎 Premium активна! Спасибо за поддержку!\n\n📬 Каждое утро в 8:00 вы получаете персональный прогноз!", reply_markup=menu_keyboard)
     else:
         remaining = get_remaining_questions(message.from_user.id)
         await message.answer(
             f"⭐ **Premium 99 Stars/мес** ⭐\n\n📊 Лимит: {remaining}/{FREE_QUESTIONS_PER_DAY}\n\n"
-            f"💎 **Что даёт:**\n✅ Безлимитные вопросы\n✅ Расширенная совместимость\n✅ PDF-отчёт\n✅ Приоритетная поддержка",
+            f"💎 **Что даёт:**\n✅ Безлимитные вопросы\n✅ Расширенная совместимость\n✅ PDF-отчёт\n✅ Ежедневный прогноз в 8:00\n✅ Приоритетная поддержка",
             reply_markup=premium_keyboard
         )
 
@@ -790,7 +775,7 @@ async def what_is_premium(callback: types.CallbackQuery):
     await callback.answer()
     await callback.message.answer(
         "🔮 **Premium 99 Stars** 🔮\n\n"
-        "1️⃣ Безлимитные вопросы\n2️⃣ Полный разбор совместимости\n3️⃣ PDF-отчёт\n4️⃣ Приоритетная поддержка\n\n💎 Нажми «Оформить подписку»!"
+        "1️⃣ Безлимитные вопросы\n2️⃣ Полный разбор совместимости\n3️⃣ PDF-отчёт\n4️⃣ Ежедневный прогноз в 8:00\n5️⃣ Приоритетная поддержка\n\n💎 Нажми «Оформить подписку»!"
     )
 
 @dp.callback_query(lambda c: c.data == "buy_subscription")
@@ -799,7 +784,7 @@ async def buy_subscription(callback: types.CallbackQuery):
     prices = [LabeledPrice(label="Premium", amount=SUBSCRIPTION_PRICE)]
     await callback.message.answer_invoice(
         title="Premium-подписка",
-        description="Безлимитные консультации + PDF-отчёт",
+        description="Безлимитные вопросы + PDF-отчёт + ежедневные прогнозы",
         payload="premium_30d",
         provider_token="",
         currency="XTR",
@@ -814,7 +799,15 @@ async def process_pre_checkout(query: PreCheckoutQuery):
 @dp.message(F.successful_payment)
 async def process_successful_payment(message: types.Message):
     activate_premium(message.from_user.id, 30)
-    await message.answer("💎 **Premium активирована!** 💎\n\nСпасибо за поддержку!", reply_markup=menu_keyboard)
+    await message.answer(
+        "💎 **Premium активирована!** 💎\n\n"
+        "✨ Теперь вам доступны:\n"
+        "✅ Безлимитные вопросы\n"
+        "✅ PDF-отчёт (кнопка в меню)\n"
+        "✅ Ежедневный прогноз в 8:00\n\n"
+        "Спасибо за поддержку!",
+        reply_markup=menu_keyboard
+    )
 
 @dp.message(F.text == "📊 Демо-отчёт")
 async def show_demo_report(message: types.Message):
@@ -824,7 +817,8 @@ async def show_demo_report(message: types.Message):
         return
     await message.answer(
         "📄 **Демо-отчёт**\n\n🔮 Число судьбы: 7\n⭐ Гороскоп: гармоничный день\n🎴 Карта: Звезда\n\n"
-        "✨ В полном отчёте (Premium): 15+ страниц, совместимость, PDF-файл.\n\n💎 Всего за 99 Stars/мес!",
+        "✨ В полном отчёте (Premium): 15+ страниц, совместимость, PDF-файл.\n\n💎 Всего за 99 Stars/мес!\n"
+        "📬 Также Premium-пользователи получают ежедневный прогноз в 8:00!",
         reply_markup=menu_keyboard
     )
 
@@ -871,50 +865,13 @@ async def process_partner_date(message: types.Message, state: FSMContext):
         reply_markup=menu_keyboard
     )
 
-@dp.message(F.text == "🔔 Настроить уведомления")
-async def setup_notifications(message: types.Message, state: FSMContext):
-    await state.set_state(Dialogue.waiting_for_notification_time)
-    await message.answer(
-        "🔔 **Настройка уведомлений**\n\nВведи время в формате `ЧЧ:ММ`\nПример: 09:00 или 18:30\n\nИли /cancel",
-        parse_mode="Markdown",
-        reply_markup=ReplyKeyboardRemove()
-    )
-
-@dp.message(StateFilter(Dialogue.waiting_for_notification_time))
-async def process_notification_time(message: types.Message, state: FSMContext):
-    if message.text == "/cancel":
-        await state.clear()
-        await message.answer("❌ Отменено.", reply_markup=menu_keyboard)
-        return
-    if not re.match(r'^\d{2}:\d{2}$', message.text):
-        await message.answer("❌ Неверный формат. Введи как `ЧЧ:ММ`", parse_mode="Markdown")
-        return
-    hour, minute = map(int, message.text.split(':'))
-    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
-        await message.answer("❌ Неверное время.")
-        return
-    save_notification_settings(message.from_user.id, message.text, True)
-    await state.clear()
-    await message.answer(f"✅ Уведомления настроены на {message.text}!\n\nЧтобы отключить, отправь /notifications_off", reply_markup=menu_keyboard)
-
-@dp.message(F.text == "⏰ Тестовое уведомление")
-async def test_notification(message: types.Message):
-    await message.answer("📬 Генерирую...")
-    forecast = await generate_daily_forecast(message.from_user.id)
-    await message.answer(forecast, parse_mode="Markdown")
-
-@dp.message(Command("notifications_off"))
-async def disable_notifications(message: types.Message):
-    save_notification_settings(message.from_user.id, "", False)
-    await message.answer("🔕 Уведомления отключены.", reply_markup=menu_keyboard)
-
 # ========== ОСНОВНОЙ ДИАЛОГ ==========
 @dp.message(Dialogue.chatting)
 async def chat_with_ai(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     user_text = message.text
     
-    menu_buttons = ["ℹ️ Помощь", "🗑 Очистить диалог", "🔮 Число судьбы", "⭐ Гороскоп", "♊ Совместимость", "🎴 Карта дня Таро", "📞 Запись к психологу", "⭐ Подписка Premium", "📊 Демо-отчёт", "📄 Получить PDF-отчёт", "🔔 Настроить уведомления", "⏰ Тестовое уведомление"]
+    menu_buttons = ["ℹ️ Помощь", "🗑 Очистить диалог", "🔮 Число судьбы", "⭐ Гороскоп", "♊ Совместимость", "🎴 Карта дня Таро", "📞 Запись к психологу", "⭐ Подписка Premium", "📊 Демо-отчёт", "📄 Получить PDF-отчёт"]
     if user_text in menu_buttons:
         return
     
@@ -977,8 +934,9 @@ async def handle_not_ready(callback: types.CallbackQuery, state: FSMContext):
 
 # ========== ЗАПУСК ==========
 async def main():
-    print("✨ Бот с уведомлениями запущен! ✨")
-    asyncio.create_task(send_daily_notifications())
+    print("✨ Бот с ежедневными уведомлениями для Premium в 8:00 запущен! ✨")
+    # Запускаем фоновую задачу для отправки утренних отчётов
+    asyncio.create_task(send_daily_premium_forecasts())
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
