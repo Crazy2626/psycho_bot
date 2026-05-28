@@ -378,8 +378,6 @@ def get_compatibility(date1: str, date2: str, premium: bool = False) -> dict:
         return {"percent": 0, "text": f"❌ Ошибка при расчёте: {e}"}
 
 async def generate_pdf_report(user_id: int, partner_date: str = None) -> io.BytesIO:
-    """Генерирует подробный PDF-отчёт (10-15 страниц)"""
-    
     gender = get_user_gender(user_id)
     name = get_user_name(user_id)
     if not name:
@@ -436,7 +434,6 @@ async def generate_pdf_report(user_id: int, partner_date: str = None) -> io.Byte
         fontName=font_name, fontSize=11, alignment=TA_CENTER, spaceAfter=8
     )
     
-    # ---- ТИТУЛЬНАЯ СТРАНИЦА ----
     story.append(Paragraph("✨ ПЕРСОНАЛЬНЫЙ НУМЕРОЛОГИЧЕСКИЙ ОТЧЁТ ✨", title_style))
     story.append(Spacer(1, 1*cm))
     safe_name = name if name else "друг"
@@ -449,27 +446,11 @@ async def generate_pdf_report(user_id: int, partner_date: str = None) -> io.Byte
     story.append(Paragraph("✨ Открывая себя — открываешь мир ✨", center_style))
     story.append(PageBreak())
     
-    # ---- 1. ЧИСЛО СУДЬБЫ ----
     fate_number, fate_desc = calculate_fate_number(birth_date, gender)
     story.append(Paragraph(f"🔮 1. ЧИСЛО СУДЬБЫ — {fate_number}", heading1_style))
     story.append(Paragraph(fate_desc, normal_style))
     story.append(Spacer(1, 0.5*cm))
     
-    fate_details = {
-        1: "Вы — прирождённый лидер. Вам суждено вести за собой, начинать новое и вдохновлять.",
-        2: "Вы — дипломат и миротворец. Ваша суперсила — находить общий язык с любым человеком.",
-        3: "Вы — творец и вдохновитель. Ваша энергия радости заражает всех вокруг.",
-        4: "Вы — строитель и опора. Ваша сила в дисциплине и упорстве.",
-        5: "Вы — искатель свободы и приключений. Рутина — ваш враг.",
-        6: "Вы — сердце семьи и опора для близких. Ваша любовь безусловна.",
-        7: "Вы — исследователь глубин. Вам нужно время для размышлений и одиночества.",
-        8: "Вы — рождены для успеха. Деньги и власть приходят к вам.",
-        9: "Вы — гуманист и учитель. Ваша миссия — помогать другим."
-    }
-    story.append(Paragraph(f"✨ <b>Глубинная расшифровка:</b> {fate_details.get(fate_number, 'Уникальная личность с особенным путём.')}", normal_style))
-    story.append(Spacer(1, 0.8*cm))
-    
-    # ---- 2. ПО ЦИФРАМ ДНЯ РОЖДЕНИЯ ----
     day, month, year = map(int, birth_date.split('.'))
     story.append(Paragraph("🔢 2. ГЛУБИННАЯ РАСШИФРОВКА ДАТЫ РОЖДЕНИЯ", heading1_style))
     
@@ -518,96 +499,78 @@ async def generate_pdf_report(user_id: int, partner_date: str = None) -> io.Byte
     story.append(Paragraph(f"📌 <b>Год рождения ({year} → {year_total}):</b> {year_desc.get(year_total, 'Ваш год рождения определяет жизненный путь.')}", normal_style))
     story.append(Spacer(1, 0.8*cm))
     
-    # ---- 3. ПРОГНОЗ НА 2026 ГОД ----
     story.append(Paragraph("⭐ 3. ПРОГНОЗ НА 2026 ГОД", heading1_style))
     year_2026 = 2026
     total_2026 = day + month + year_2026
     while total_2026 > 9:
         total_2026 = sum(int(d) for d in str(total_2026))
     forecasts_2026 = {
-        1: "🔥 ГОД ЛИДЕРСТВА — новые начинания и возможности проявить себя.",
-        2: "🤝 ГОД СОТРУДНИЧЕСТВА — удачные партнёрства и гармония.",
-        3: "🎨 ГОД ТВОРЧЕСТВА — время самовыражения и вдохновения.",
-        4: "🏗️ ГОД СТРОИТЕЛЬСТВА — закладывайте фундамент для будущего.",
+        1: "🔥 ГОД ЛИДЕРСТВА — новые начинания и возможности.",
+        2: "🤝 ГОД СОТРУДНИЧЕСТВА — удачные партнёрства.",
+        3: "🎨 ГОД ТВОРЧЕСТВА — время самовыражения.",
+        4: "🏗️ ГОД СТРОИТЕЛЬСТВА — закладывайте фундамент.",
         5: "✈️ ГОД ПЕРЕМЕН — путешествия и новые впечатления.",
         6: "🏡 ГОД СЕМЬИ — время укрепить связи с близкими.",
-        7: "📚 ГОД МУДРОСТИ — обучение, самоанализ и духовный рост.",
-        8: "💼 ГОД СИЛЫ — карьерный рост и финансовый успех.",
+        7: "📚 ГОД МУДРОСТИ — обучение и духовный рост.",
+        8: "💼 ГОД СИЛЫ — карьерный рост и успех.",
         9: "🌅 ГОД ЗАВЕРШЕНИЯ — отпустите прошлое, подведите итоги."
     }
     story.append(Paragraph(f"✨ <b>Число 2026 года для вас: {total_2026}</b>", heading2_style))
     story.append(Paragraph(forecasts_2026.get(total_2026, "Год перемен и новых возможностей."), normal_style))
     story.append(Spacer(1, 0.3*cm))
     
-    # Прогноз по сферам
     story.append(Paragraph("<b>🔮 Детальный прогноз по сферам жизни на 2026 год:</b>", heading3_style))
     love_text = "💕 <b>Любовь и отношения:</b> " + {
         1: "Год активного поиска. Вас ждут яркие знакомства.",
         2: "Год гармонии. Существующие отношения укрепятся.",
-        3: "Год флирта и лёгкости. Не торопитесь с обязательствами.",
-        4: "Год стабильности. Отношения требуют работы.",
+        3: "Год флирта и лёгкости.",
+        4: "Год стабильности.",
         5: "Год перемен. Возможны новые романы.",
-        6: "Год семьи. Время укреплять связи с близкими.",
+        6: "Год семьи.",
         7: "Год одиночества и самоанализа.",
-        8: "Год страсти. Яркие романы и сильные чувства.",
-        9: "Год завершения. Отпустите старые связи."
-    }.get(total_2026, "Год приятных сюрпризов в личной жизни.")
+        8: "Год страсти.",
+        9: "Год завершения."
+    }.get(total_2026, "Год приятных сюрпризов.")
     story.append(Paragraph(love_text, normal_style))
     story.append(Spacer(1, 0.2*cm))
     
     career_text = "💼 <b>Карьера и финансы:</b> " + {
-        1: "Год новых проектов и стартов.",
-        2: "Год партнёрств. Работа в команде принесёт плоды.",
-        3: "Год творчества. Ищите нестандартные решения.",
-        4: "Год упорного труда. Закладывайте фундамент.",
-        5: "Год перемен. Не бойтесь менять работу.",
-        6: "Год стабильности. Укрепляйте позиции.",
-        7: "Год обучения. Инвестируйте в знания.",
-        8: "Год успеха и признания.",
+        1: "Год новых проектов.",
+        2: "Год партнёрств.",
+        3: "Год творчества.",
+        4: "Год упорного труда.",
+        5: "Год перемен.",
+        6: "Год стабильности.",
+        7: "Год обучения.",
+        8: "Год успеха.",
         9: "Год завершения проектов."
     }.get(total_2026, "Год карьерного роста.")
     story.append(Paragraph(career_text, normal_style))
     story.append(Spacer(1, 0.2*cm))
     
-    health_text = "🌸 <b>Здоровье:</b> " + {
-        1: "Будьте активны. Спорт и движение — ваше всё.",
-        2: "Уделяйте внимание психологическому состоянию.",
-        3: "Заботьтесь о нервной системе. Избегайте перегрузок.",
-        4: "Обратите внимание на питание и режим.",
-        5: "Путешествия пойдут на пользу.",
-        6: "Уделяйте время семье и дому.",
-        7: "Восстанавливайтесь через знания и духовные практики.",
-        8: "Следите за спиной и суставами.",
-        9: "Завершите курсы лечения."
-    }.get(total_2026, "Год для укрепления здоровья.")
-    story.append(Paragraph(health_text, normal_style))
-    story.append(Spacer(1, 0.8*cm))
-    
-    # ---- 4. ПОМЕСЯЧНЫЙ ПРОГНОЗ ----
     story.append(Paragraph("📅 4. ПОМЕСЯЧНЫЙ ПРОГНОЗ НА 2026 ГОД", heading1_style))
     monthly_details = [
-        ("Январь", "🌟 Месяц новых начинаний. Ставьте цели и действуйте смело!"),
-        ("Февраль", "💕 Месяц любви и гармонии. Укрепляйте отношения с близкими."),
-        ("Март", "🎨 Месяц творчества. Займитесь тем, что приносит радость."),
-        ("Апрель", "🏗️ Месяц труда. Работайте над долгосрочными проектами."),
-        ("Май", "✈️ Месяц перемен. Путешествия и новые впечатления."),
-        ("Июнь", "🏡 Месяц семьи. Время заботы о доме и близких."),
-        ("Июль", "📚 Месяц мудрости. Учитесь и анализируйте."),
-        ("Август", "💼 Месяц силы. Карьерные успехи и финансовая удача."),
-        ("Сентябрь", "🌅 Месяц завершения. Подводите итоги."),
-        ("Октябрь", "🌟 Новый цикл. Новые возможности."),
-        ("Ноябрь", "🤝 Месяц партнёрства. Ищите союзников."),
-        ("Декабрь", "🎄 Месяц радости. Наслаждайтесь праздниками и итогами года.")
+        ("Январь", "🌟 Месяц новых начинаний."),
+        ("Февраль", "💕 Месяц любви и гармонии."),
+        ("Март", "🎨 Месяц творчества."),
+        ("Апрель", "🏗️ Месяц труда."),
+        ("Май", "✈️ Месяц перемен."),
+        ("Июнь", "🏡 Месяц семьи."),
+        ("Июль", "📚 Месяц мудрости."),
+        ("Август", "💼 Месяц силы."),
+        ("Сентябрь", "🌅 Месяц завершения."),
+        ("Октябрь", "🌟 Новый цикл."),
+        ("Ноябрь", "🤝 Месяц партнёрства."),
+        ("Декабрь", "🎄 Месяц радости.")
     ]
     for month_name, month_text in monthly_details:
         story.append(Paragraph(f"<b>{month_name}:</b> {month_text}", normal_style))
         story.append(Spacer(1, 0.2*cm))
     story.append(Spacer(1, 0.5*cm))
     
-    # ---- 5. СОВМЕСТИМОСТЬ ----
     if partner_date:
         comp = get_compatibility(birth_date, partner_date, premium=True)
-        story.append(Paragraph("💕 5. ДЕТАЛЬНЫЙ АНАЛИЗ СОВМЕСТИМОСТИ", heading1_style))
+        story.append(Paragraph("💕 5. АНАЛИЗ СОВМЕСТИМОСТИ", heading1_style))
         story.append(Paragraph(f"📅 <b>Ваша дата:</b> {birth_date} → {comp['sign1']}", normal_style))
         story.append(Paragraph(f"📅 <b>Дата партнёра:</b> {partner_date} → {comp['sign2']}", normal_style))
         story.append(Spacer(1, 0.5*cm))
@@ -620,21 +583,20 @@ async def generate_pdf_report(user_id: int, partner_date: str = None) -> io.Byte
         story.append(Paragraph("🔓 Полный анализ совместимости доступен по подписке Premium.", normal_style))
         story.append(Spacer(1, 0.5*cm))
     
-    # ---- 6. РАСКЛАД ТАРО ----
     story.append(Paragraph("🎴 6. РАСКЛАД ТАРО «КЕЛЬТСКИЙ КРЕСТ»", heading1_style))
-    story.append(Paragraph("Этот древний расклад покажет ваш путь на ближайшее время.", normal_style))
+    story.append(Paragraph("Этот древний расклад покажет ваш путь.", normal_style))
     story.append(Spacer(1, 0.3*cm))
     
     taro_spreads = [
-        ("1. Вы сейчас", "Маг 🪄 — «У вас есть все ресурсы для достижения цели. Действуйте!»"),
-        ("2. Что вас ждёт", "Колесница ⚡ — «Время двигаться вперёд, преодолевая препятствия.»"),
-        ("3. Испытания", "Звезда ⭐ — «Верьте в лучшее. Вселенная готовит вам подарок.»"),
+        ("1. Вы сейчас", "Маг 🪄 — «У вас есть все ресурсы.»"),
+        ("2. Что вас ждёт", "Колесница ⚡ — «Время двигаться вперёд.»"),
+        ("3. Испытания", "Звезда ⭐ — «Верьте в лучшее.»"),
         ("4. Помощь", "Сила 🦁 — «Внутренняя мощь поведёт вас.»"),
-        ("5. Любовь", "Влюблённые 💕 — «Судьбоносная встреча или важный выбор.»"),
-        ("6. Карьера", "Император 🏛️ — «Укрепление позиций или повышение.»"),
-        ("7. Финансы", "Десятка Пентаклей 💰 — «Стабильный доход, возможно наследство.»"),
+        ("5. Любовь", "Влюблённые 💕 — «Судьбоносная встреча.»"),
+        ("6. Карьера", "Император 🏛️ — «Укрепление позиций.»"),
+        ("7. Финансы", "Десятка Пентаклей 💰 — «Стабильный доход.»"),
         ("8. Здоровье", "Умеренность ⚖️ — «Баланс между работой и отдыхом.»"),
-        ("9. Духовный рост", "Отшельник 🏮 — «Год глубокого самоанализа.»"),
+        ("9. Духовный рост", "Отшельник 🏮 — «Год самоанализа.»"),
         ("10. Итог года", "Мир 🌍 — «Завершение цикла, достижение цели.»")
     ]
     for card, meaning in taro_spreads:
@@ -642,32 +604,27 @@ async def generate_pdf_report(user_id: int, partner_date: str = None) -> io.Byte
         story.append(Spacer(1, 0.2*cm))
     story.append(Spacer(1, 0.5*cm))
     
-    # ---- 7. АФФИРМАЦИИ ----
-    story.append(Paragraph("✨ 7. ЕЖЕДНЕВНЫЕ АФФИРМАЦИИ НА МЕСЯЦ", heading1_style))
+    story.append(Paragraph("✨ 7. ЕЖЕДНЕВНЫЕ АФФИРМАЦИИ", heading1_style))
     affirmations = [
         "Я открыта новым возможностям. Вселенная заботится обо мне.",
-        "Мои таланты признаны и ценны. Я достойна успеха.",
-        "Я привлекаю успех и изобилие. Деньги приходят ко мне легко.",
-        "Моя интуиция ведёт меня правильным путём. Я доверяю себе.",
-        "Я люблю и принимаю себя целиком. Я совершенна.",
-        "Каждый день я становлюсь сильнее и мудрее.",
-        "Я достойна всего самого лучшего. Я выбираю счастье.",
-        "Мои мечты сбываются в нужное время. Я благодарна."
+        "Мои таланты признаны и ценны.",
+        "Я привлекаю успех и изобилие.",
+        "Моя интуиция ведёт меня.",
+        "Я люблю и принимаю себя целиком.",
+        "Каждый день я становлюсь сильнее."
     ]
     for i, aff in enumerate(affirmations, 1):
         story.append(Paragraph(f"<b>{i}:</b> «{aff}»", normal_style))
         story.append(Spacer(1, 0.2*cm))
     story.append(Spacer(1, 0.5*cm))
     
-    # ---- 8. ЛУННЫЙ КАЛЕНДАРЬ ----
-    story.append(Paragraph("🌙 8. ЛУННЫЙ КАЛЕНДАРЬ И РИТУАЛЫ", heading1_style))
-    story.append(Paragraph("🌑 <b>Новолуние</b> — время начинать новое, загадывать желания.", normal_style))
-    story.append(Paragraph("🌓 <b>Первая четверть</b> — время действовать, принимать решения.", normal_style))
-    story.append(Paragraph("🌕 <b>Полнолуние</b> — время подводить итоги, отпускать лишнее.", normal_style))
-    story.append(Paragraph("🌗 <b>Последняя четверть</b> — время завершать дела, избавляться от ненужного.", normal_style))
+    story.append(Paragraph("🌙 8. ЛУННЫЙ КАЛЕНДАРЬ", heading1_style))
+    story.append(Paragraph("🌑 <b>Новолуние</b> — время начинать новое.", normal_style))
+    story.append(Paragraph("🌓 <b>Первая четверть</b> — время действовать.", normal_style))
+    story.append(Paragraph("🌕 <b>Полнолуние</b> — время подводить итоги.", normal_style))
+    story.append(Paragraph("🌗 <b>Последняя четверть</b> — время завершать.", normal_style))
     story.append(Spacer(1, 0.5*cm))
     
-    # ---- 9. ЗАКЛЮЧЕНИЕ ----
     story.append(Paragraph("💫 9. ПЕРСОНАЛЬНЫЕ РЕКОМЕНДАЦИИ", heading1_style))
     story.append(Paragraph("✨ <b>Доверяйте своей интуиции</b> — она редко ошибается.", normal_style))
     story.append(Paragraph("✨ <b>Уделяйте время отдыху</b> — ваша энергия главный ресурс.", normal_style))
@@ -719,11 +676,11 @@ async def generate_daily_forecast(user_id: int) -> str:
             "Стрелец": "✈️ *Стрелец* — звёзды зовут в путешествия!",
             "Козерог": "🏔️ *Козерог* — день карьерных побед.",
             "Водолей": "💡 *Водолей* — идеи витают в воздухе!",
-            "Рыбы": "🎨 *Рыбы* — погрузись в творчество или медитацию."
+            "Рыбы": "🎨 *Рыбы* — погрузись в творчество."
         }
-        horoscope = forecasts.get(sign, "🌟 Звёзды шепчут: сегодня отличный день для тебя!")
+        horoscope = forecasts.get(sign, "🌟 Звёзды шепчут: сегодня отличный день!")
     else:
-        horoscope = "🌟 Звёзды шепчут: сегодня отличный день для тебя!"
+        horoscope = "🌟 Звёзды шепчут: сегодня отличный день!"
         sign = "—"
     
     cards = {
@@ -732,22 +689,14 @@ async def generate_daily_forecast(user_id: int) -> str:
         "Верховная Жрица": "🌙 *Верховная Жрица* — Доверься интуиции.",
         "Императрица": "👑 *Императрица* — Время творить!",
         "Император": "🏛️ *Император* — Укрепляй границы.",
-        "Иерофант": "⛪ *Иерофант* — Обратись за советом.",
-        "Влюбленные": "💕 *Влюбленные* — Важный выбор на пути.",
+        "Влюбленные": "💕 *Влюбленные* — Важный выбор.",
         "Колесница": "⚡ *Колесница* — Управляй судьбой!",
         "Сила": "🦁 *Сила* — Ты сильнее, чем кажешься.",
         "Отшельник": "🏮 *Отшельник* — Время тишины.",
         "Колесо Фортуны": "🎡 *Колесо Фортуны* — Перемены к лучшему.",
         "Справедливость": "⚖️ *Справедливость* — Поступи справедливо.",
-        "Повешенный": "🪢 *Повешенный* — Новый взгляд.",
-        "Смерть": "♻️ *Смерть* — Старое уходит.",
-        "Умеренность": "⚖️ *Умеренность* — Найди баланс.",
-        "Дьявол": "😈 *Дьявол* — Освободись.",
-        "Башня": "🏛️💥 *Башня* — Крах иллюзий.",
         "Звезда": "⭐ *Звезда* — Верь в лучшее!",
-        "Луна": "🌕 *Луна* — Доверяй интуиции.",
         "Солнце": "☀️ *Солнце* — Всё будет хорошо!",
-        "Суд": "🎺 *Суд* — Время подвести итоги.",
         "Мир": "🌍 *Мир* — Ты достигла цели!"
     }
     card_name = random.choice(list(cards.keys()))
@@ -817,14 +766,14 @@ user_problems = {}
 SYSTEM_PROMPT = f"""Ты — эмпатичный психолог-помощник по имени {PSYCHOLOGIST_NAME}.
 
 Твои правила:
-1. Внимательно слушай и задавай уточняющие вопросы.
-2. Проявляй эмпатию и поддержку. Используй эмодзи.
+1. Внимательно слушай и задавай вопросы.
+2. Проявляй эмпатию и поддержку.
 3. Не ставь диагнозы.
 4. При кризисе — дай телефон доверия: 8-800-2000-122.
 5. После 4-6 обменов предложи записаться к психологу.
 6. В конце сообщения с предложением записи добавь: "ЗАПИСЬ_ГОТОВА"
 
-Отвечай на русском, коротко (2-4 предложения), с душой."""
+Отвечай на русском, коротко (2-4 предложения)."""
 
 def get_history(user_id: int):
     if user_id not in user_history:
@@ -885,21 +834,12 @@ async def cmd_start(message: types.Message, state: FSMContext):
         del user_problems[user_id]
     
     remaining = get_remaining_questions(user_id)
-    status = "💎 Premium" if is_premium(user_id) else f"📊 {remaining}/{FREE_QUESTIONS_PER_DAY} вопросов сегодня"
+    status = "💎 Premium" if is_premium(user_id) else f"📊 {remaining}/{FREE_QUESTIONS_PER_DAY}"
     
     await message.answer(
         f"✨ *Добро пожаловать, {message.from_user.first_name or 'дорогой друг'}!* ✨\n\n"
-        f"🌸 Я {PSYCHOLOGIST_NAME}, твой персональный гид.\n\n"
-        f"📊 Твой статус: {status}\n\n"
-        f"💫 *Что я умею:*\n"
-        f"🔮 **Число судьбы**\n"
-        f"⭐ **Гороскоп**\n"
-        f"♊ **Совместимость**\n"
-        f"🎴 **Карта дня Таро**\n"
-        f"📞 **Запись к психологу**\n"
-        f"📊 **Демо-отчёт**\n"
-        f"📄 **PDF-отчёт** (Premium)\n"
-        f"⭐ **Подписка Premium**\n\n"
+        f"🌸 Я {PSYCHOLOGIST_NAME}, твой гид.\n\n"
+        f"📊 Статус: {status}\n\n"
         f"👇 *Напиши мне или используй кнопки меню!*",
         reply_markup=menu_keyboard,
         parse_mode="Markdown"
@@ -920,7 +860,7 @@ async def cmd_reset(message: types.Message, state: FSMContext):
     if user_id in user_problems:
         del user_problems[user_id]
     await state.clear()
-    await message.answer("🔄 История очищена. Начинаем заново!", reply_markup=menu_keyboard)
+    await message.answer("🔄 История очищена.", reply_markup=menu_keyboard)
     await state.set_state(Dialogue.chatting)
 
 @dp.message(Command("activate_premium"))
@@ -933,10 +873,6 @@ async def force_activate_premium(message: types.Message, state: FSMContext):
     activate_premium(user_id, 30)
     await message.answer(
         "✅ *Premium активирован вручную!* ✅\n\n"
-        "✨ Теперь тебе доступны:\n"
-        "✅ Безлимитные вопросы\n"
-        "✅ Полный PDF-отчёт\n"
-        "✅ Ежедневный прогноз в 8:00\n\n"
         "📄 Нажми «📄 Получить PDF-отчёт» чтобы скачать свой первый отчёт!",
         parse_mode="Markdown",
         reply_markup=menu_keyboard
@@ -948,18 +884,17 @@ async def menu_help(message: types.Message, state: FSMContext):
     remaining = get_remaining_questions(message.from_user.id)
     await message.answer(
         f"📖 *Мои возможности:*\n\n"
-        f"📊 Осталось вопросов сегодня: {remaining}/{FREE_QUESTIONS_PER_DAY}\n\n"
+        f"📊 Осталось вопросов: {remaining}/{FREE_QUESTIONS_PER_DAY}\n\n"
         f"💬 *Просто напиши* — поддержка\n"
-        f"🔮 *Число судьбы* — введи дату\n"
-        f"⭐ *Гороскоп* — выбери знак\n"
-        f"♊ *Совместимость* — введи две даты\n"
-        f"🎴 *Карта дня Таро* — совет\n"
-        f"📞 *Запись к психологу* — консультация\n"
-        f"📊 *Демо-отчёт* — пример\n"
-        f"📄 *PDF-отчёт* — только Premium\n"
-        f"⭐ *Подписка Premium* — безлимит\n\n"
-        f"🗑 /reset — начать заново\n"
-        f"❌ /cancel — отменить",
+        f"🔮 *Число судьбы*\n"
+        f"⭐ *Гороскоп*\n"
+        f"♊ *Совместимость*\n"
+        f"🎴 *Карта дня Таро*\n"
+        f"📞 *Запись к психологу*\n"
+        f"📊 *Демо-отчёт*\n"
+        f"📄 *PDF-отчёт* (Premium)\n"
+        f"⭐ *Подписка Premium*\n\n"
+        f"🗑 /reset\n❌ /cancel",
         reply_markup=menu_keyboard,
         parse_mode="Markdown"
     )
@@ -973,23 +908,21 @@ async def menu_reset(message: types.Message, state: FSMContext):
     if user_id in user_problems:
         del user_problems[user_id]
     await state.clear()
-    await message.answer("🧹 История диалога очищена. Начинаем заново!", reply_markup=menu_keyboard)
+    await message.answer("🧹 История очищена.", reply_markup=menu_keyboard)
     await state.set_state(Dialogue.chatting)
 
 @dp.message(F.text == "🔮 Число судьбы")
 async def fate_number_start(message: types.Message, state: FSMContext):
     await state.set_state(Dialogue.waiting_for_birthdate)
     await message.answer(
-        "🔮 *Расчёт числа судьбы*\n\n"
-        "Введи дату рождения в формате:\n`ДД.ММ.ГГГГ`\n\n"
-        "🌙 *Пример:* 15.05.1990",
+        "🔮 *Расчёт числа судьбы*\n\nВведи дату рождения `ДД.ММ.ГГГГ`\n🌙 Пример: 15.05.1990",
         parse_mode="Markdown"
     )
 
 @dp.message(StateFilter(Dialogue.waiting_for_birthdate))
 async def process_fate_number(message: types.Message, state: FSMContext):
     if not re.match(r'^\d{2}\.\d{2}\.\d{4}$', message.text):
-        await message.answer("❌ Неверный формат. Введи как `ДД.ММ.ГГГГ`", reply_markup=menu_keyboard, parse_mode="Markdown")
+        await message.answer("❌ Неверный формат.", reply_markup=menu_keyboard)
         await state.set_state(Dialogue.chatting)
         return
     
@@ -1009,11 +942,7 @@ async def process_fate_number(message: types.Message, state: FSMContext):
 async def horoscope_start(message: types.Message, state: FSMContext):
     await state.set_state(Dialogue.waiting_for_zodiac)
     await message.answer(
-        "⭐ *Гороскоп на сегодня*\n\n"
-        "Введи знак или дату рождения:\n\n"
-        "♈ Овен, ♉ Телец, ♊ Близнецы, ♋ Рак, ♌ Лев, ♍ Дева,\n"
-        "♎ Весы, ♏ Скорпион, ♐ Стрелец, ♑ Козерог, ♒ Водолей, ♓ Рыбы\n\n"
-        "✨ Или отправь дату: `ДД.ММ.ГГГГ`",
+        "⭐ *Гороскоп*\n\nВведи знак или дату `ДД.ММ.ГГГГ`",
         parse_mode="Markdown"
     )
 
@@ -1036,107 +965,26 @@ async def process_horoscope(message: types.Message, state: FSMContext):
         if text.lower() in known:
             zodiac_sign = known[text.lower()]
         else:
-            await message.answer("❌ Неизвестный знак. Попробуй ещё раз.", reply_markup=menu_keyboard)
+            await message.answer("❌ Неизвестный знак.", reply_markup=menu_keyboard)
             await state.set_state(Dialogue.chatting)
             return
     
-    detailed_forecasts = {
-        "Овен": {
-            "general": "🔥 Энергия зашкаливает! Ты — огненный ураган.",
-            "love": "💕 В личных отношениях возможна вспышка страсти.",
-            "career": "💼 Отличный день для новых проектов.",
-            "health": "🏃‍♀️ Будь осторожна с переутомлением.",
-            "advice": "🌟 Направь энергию в мирное русло."
-        },
-        "Телец": {
-            "general": "💰 Деньги любят тебя сегодня!",
-            "love": "💕 Романтический вечер укрепит отношения.",
-            "career": "💼 Не бойся просить повышения.",
-            "health": "🥗 Обрати внимание на питание.",
-            "advice": "🌟 Позволь себе небольшое удовольствие."
-        },
-        "Близнецы": {
-            "general": "💬 Общение — твой главный козырь.",
-            "love": "💕 Флирт и лёгкость привлекут нужного человека.",
-            "career": "💼 Переговоры пройдут успешно.",
-            "health": "🧘‍♀️ Медитация поможет успокоить ум.",
-            "advice": "🌟 Делитесь идеями."
-        },
-        "Рак": {
-            "general": "🏠 Сегодня твоя стихия — дом и семья.",
-            "love": "💕 Скажи близким о своей любви.",
-            "career": "💼 Работа подождёт.",
-            "health": "🛁 Прими расслабляющую ванну.",
-            "advice": "🌟 Побалуй себя чем-то вкусным."
-        },
-        "Лев": {
-            "general": "🎭 Сегодня ты звезда!",
-            "love": "💕 Романтический сюрприз поднимет настроение.",
-            "career": "💼 Тебя заметит начальство.",
-            "health": "💃 Танцы принесут радость.",
-            "advice": "🌟 Покажи миру, на что ты способна!"
-        },
-        "Дева": {
-            "general": "📋 Порядок во всём — твой девиз.",
-            "love": "💕 Не критикуй по пустякам.",
-            "career": "💼 Деньги придут через мелкие дела.",
-            "health": "🧹 Займись профилактикой.",
-            "advice": "🌟 Наведи чистоту."
-        },
-        "Весы": {
-            "general": "⚖️ Гармония — твоё главное оружие.",
-            "love": "💕 Романтический ужин укрепит отношения.",
-            "career": "💼 Посредничество принесёт уважение.",
-            "health": "🎨 Творчество восстановит равновесие.",
-            "advice": "🌟 Ищи красоту в мелочах."
-        },
-        "Скорпион": {
-            "general": "🦂 Глубины твоей души особенно активны.",
-            "love": "💕 Страсть накаляется.",
-            "career": "💼 Интуиция подскажет решение.",
-            "health": "🧠 Удели время разгрузке.",
-            "advice": "🌟 Твоя сила — в умении видеть суть."
-        },
-        "Стрелец": {
-            "general": "✈️ Тянет в путешествия!",
-            "love": "💕 Новые знакомства обещают быть интересными.",
-            "career": "💼 Командировка принесёт пользу.",
-            "health": "🚶‍♀️ Ходьба восстановит силы.",
-            "advice": "🌟 Расширяй горизонты."
-        },
-        "Козерог": {
-            "general": "🏔️ Карьерные высоты манят.",
-            "love": "💕 Поговори с партнёром о чувствах.",
-            "career": "💼 Твой труд оценят.",
-            "health": "💪 Не забывай про активность.",
-            "advice": "🌟 Упорство приведёт к цели."
-        },
-        "Водолей": {
-            "general": "💡 Идеи витают в воздухе!",
-            "love": "💕 Нестандартный подход принесёт свежесть.",
-            "career": "💼 Креатив поможет выделиться.",
-            "health": "😴 Удели внимание сну.",
-            "advice": "🌟 Не бойся быть странной."
-        },
-        "Рыбы": {
-            "general": "🎨 Творчество и интуиция на высоте.",
-            "love": "💕 Мечты о любви могут стать реальностью.",
-            "career": "💼 Вдохновение поможет справиться.",
-            "health": "🌊 Вода лечит.",
-            "advice": "🌟 Доверяй своим чувствам."
-        }
+    forecasts = {
+        "Овен": "🔥 Энергия бьёт ключом!",
+        "Телец": "💰 Хороший день для финансов.",
+        "Близнецы": "💬 День общения.",
+        "Рак": "🏠 День семьи.",
+        "Лев": "🎭 Творческий день.",
+        "Дева": "📋 День порядка.",
+        "Весы": "⚖️ День гармонии.",
+        "Скорпион": "🦂 День трансформации.",
+        "Стрелец": "✈️ День приключений.",
+        "Козерог": "🏔️ День достижений.",
+        "Водолей": "💡 День идей.",
+        "Рыбы": "🎨 День творчества."
     }
-    
-    f = detailed_forecasts.get(zodiac_sign, detailed_forecasts["Весы"])
-    
     await message.answer(
-        f"✨ *Гороскоп для {zodiac_sign} на сегодня* ✨\n\n"
-        f"🔮 {f['general']}\n\n"
-        f"💕 {f['love']}\n\n"
-        f"💼 {f['career']}\n\n"
-        f"🌸 {f['health']}\n\n"
-        f"💫 {f['advice']}\n\n"
-        f"🌟 Хорошего дня! ✨",
+        f"✨ *Гороскоп для {zodiac_sign}* ✨\n\n{forecasts.get(zodiac_sign, 'Гармоничный день.')}",
         parse_mode="Markdown",
         reply_markup=menu_keyboard
     )
@@ -1146,31 +994,25 @@ async def process_horoscope(message: types.Message, state: FSMContext):
 async def compatibility_start(message: types.Message, state: FSMContext):
     await state.set_state(Dialogue.waiting_for_birthdate_comp)
     await message.answer(
-        "💕 *Расчёт совместимости*\n\n"
-        "Введи *первую* дату рождения:\n`ДД.ММ.ГГГГ`\n\n"
-        "🌙 *Пример:* 15.05.1990",
+        "💕 *Расчёт совместимости*\n\nВведи *первую* дату рождения `ДД.ММ.ГГГГ`",
         parse_mode="Markdown"
     )
 
 @dp.message(StateFilter(Dialogue.waiting_for_birthdate_comp))
 async def process_compatibility_first(message: types.Message, state: FSMContext):
     if not re.match(r'^\d{2}\.\d{2}\.\d{4}$', message.text):
-        await message.answer("❌ Неверный формат. Введи как `ДД.ММ.ГГГГ`", reply_markup=menu_keyboard, parse_mode="Markdown")
+        await message.answer("❌ Неверный формат.", reply_markup=menu_keyboard)
         await state.set_state(Dialogue.chatting)
         return
     
     await state.update_data(date1=message.text)
     await state.set_state(Dialogue.waiting_for_birthdate_comp2)
-    await message.answer(
-        "💕 *Расчёт совместимости*\n\n"
-        "Теперь введи *вторую* дату рождения:\n`ДД.ММ.ГГГГ`",
-        parse_mode="Markdown"
-    )
+    await message.answer("💕 Введи *вторую* дату рождения `ДД.ММ.ГГГГ`", parse_mode="Markdown")
 
 @dp.message(StateFilter(Dialogue.waiting_for_birthdate_comp2))
 async def process_compatibility_second(message: types.Message, state: FSMContext):
     if not re.match(r'^\d{2}\.\d{2}\.\d{4}$', message.text):
-        await message.answer("❌ Неверный формат. Введи как `ДД.ММ.ГГГГ`", reply_markup=menu_keyboard, parse_mode="Markdown")
+        await message.answer("❌ Неверный формат.", reply_markup=menu_keyboard)
         await state.set_state(Dialogue.chatting)
         return
     
@@ -1179,7 +1021,6 @@ async def process_compatibility_second(message: types.Message, state: FSMContext
     if not date1:
         await message.answer("❌ Ошибка. Начни заново.", reply_markup=menu_keyboard)
         await state.set_state(Dialogue.chatting)
-        await state.clear()
         return
     
     user_id = message.from_user.id
@@ -1193,8 +1034,7 @@ async def process_compatibility_second(message: types.Message, state: FSMContext
             f"♊ *Результат совместимости* ♊\n\n"
             f"📅 {date1} → *{result['sign1']}*\n"
             f"📅 {message.text} → *{result['sign2']}*\n\n"
-            f"🌟 *Совместимость: {result['percent']}%* 🌟\n\n"
-            f"{result['text']}",
+            f"🌟 *{result['percent']}%*\n\n{result['text']}",
             parse_mode="Markdown",
             reply_markup=menu_keyboard
         )
@@ -1204,149 +1044,32 @@ async def process_compatibility_second(message: types.Message, state: FSMContext
 @dp.message(F.text == "🎴 Карта дня Таро")
 async def taro_card_handler(message: types.Message, state: FSMContext):
     taro_cards = {
-        "Шут": {
-            "img": "🎭",
-            "meaning": "Новое начало, спонтанность, вера в лучшее.",
-            "advice": "Пора сделать первый шаг! 🌈",
-            "detail": "Ты стоишь на пороге чего-то нового. Доверься потоку жизни!"
-        },
-        "Маг": {
-            "img": "🪄",
-            "meaning": "Сила воли, проявление желаний, мастерство.",
-            "advice": "У тебя есть всё необходимое! 🌟",
-            "detail": "Ты обладаешь уникальными талантами. Действуй!"
-        },
-        "Верховная Жрица": {
-            "img": "🌙",
-            "meaning": "Интуиция, тайны, подсознание.",
-            "advice": "Прислушайся к своему внутреннему голосу. 🔮",
-            "detail": "Твоя интуиция сейчас на пике. Доверяй знакам."
-        },
-        "Императрица": {
-            "img": "👑",
-            "meaning": "Творчество, изобилие, забота.",
-            "advice": "Время творить и созидать! 🌸",
-            "detail": "Вокруг тебя появляются возможности для роста."
-        },
-        "Император": {
-            "img": "🏛️",
-            "meaning": "Структура, власть, стабильность.",
-            "advice": "Наведи порядок в делах. ⚡",
-            "detail": "Пришло время взять ответственность за свою жизнь."
-        },
-        "Иерофант": {
-            "img": "⛪",
-            "meaning": "Традиции, обучение, наставничество.",
-            "advice": "Обратись за советом к тому, кому доверяешь. 📚",
-            "detail": "Тебе может встретиться мудрый человек."
-        },
-        "Влюбленные": {
-            "img": "💕",
-            "meaning": "Любовь, выбор, гармония.",
-            "advice": "Слушай сердце — оно не обманет. 💗",
-            "detail": "Тебя ждёт важный выбор в отношениях."
-        },
-        "Колесница": {
-            "img": "⚡",
-            "meaning": "Воля, контроль, победа.",
-            "advice": "Преодолей сомнения и двигайся к цели! 🏆",
-            "detail": "Ты на правильном пути."
-        },
-        "Сила": {
-            "img": "🦁",
-            "meaning": "Мужество, внутренняя сила.",
-            "advice": "Ты сильнее, чем кажешься. 💪",
-            "detail": "Внутри тебя скрыта огромная мощь."
-        },
-        "Отшельник": {
-            "img": "🏮",
-            "meaning": "Самоанализ, мудрость.",
-            "advice": "Время побыть наедине с собой. 🕯️",
-            "detail": "Ответы придут, когда ты успокоишь ум."
-        },
-        "Колесо Фортуны": {
-            "img": "🎡",
-            "meaning": "Перемены, удача.",
-            "advice": "Жизнь меняется к лучшему! ✨",
-            "detail": "Грядут перемены, и они будут к лучшему."
-        },
-        "Справедливость": {
-            "img": "⚖️",
-            "meaning": "Честность, равновесие.",
-            "advice": "Будь честна с собой. 🕊️",
-            "detail": "Карма сейчас активна как никогда."
-        },
-        "Повешенный": {
-            "img": "🪢",
-            "meaning": "Новая перспектива.",
-            "advice": "Посмотри на ситуацию иначе. 👁️",
-            "detail": "Сделай паузу и переосмысли путь."
-        },
-        "Смерть": {
-            "img": "♻️",
-            "meaning": "Трансформация, новое начало.",
-            "advice": "Не бойся отпустить прошлое. 🌱",
-            "detail": "Что-то в твоей жизни подходит к концу."
-        },
-        "Умеренность": {
-            "img": "⚖️",
-            "meaning": "Баланс, терпение.",
-            "advice": "Найди золотую середину. 🌊",
-            "detail": "Не торопись. Всему своё время."
-        },
-        "Дьявол": {
-            "img": "😈",
-            "meaning": "Зависимости, искушение.",
-            "advice": "Пора разорвать цепи. 🔗",
-            "detail": "Что-то или кто-то держит тебя в плену."
-        },
-        "Башня": {
-            "img": "🏛️💥",
-            "meaning": "Внезапные перемены.",
-            "advice": "Не сопротивляйся — так нужно. 🌪️",
-            "detail": "То, на что ты опиралась, может разрушиться."
-        },
-        "Звезда": {
-            "img": "⭐",
-            "meaning": "Надежда, исцеление.",
-            "advice": "Загадай желание! 🌟",
-            "detail": "После бури всегда выходит солнце."
-        },
-        "Луна": {
-            "img": "🌕",
-            "meaning": "Иллюзии, страхи.",
-            "advice": "Доверяй интуиции. 🌙",
-            "detail": "Твои страхи могут рисовать ложные картины."
-        },
-        "Солнце": {
-            "img": "☀️",
-            "meaning": "Радость, успех.",
-            "advice": "Твой день сияет! 🌞",
-            "detail": "Счастье уже близко."
-        },
-        "Суд": {
-            "img": "🎺",
-            "meaning": "Пробуждение, прощение.",
-            "advice": "Подведи итоги. 🕊️",
-            "detail": "Ты готова к перерождению."
-        },
-        "Мир": {
-            "img": "🌍",
-            "meaning": "Завершение, удовлетворение.",
-            "advice": "Поздравляю! 🏆",
-            "detail": "Ты достигла того, к чему шла."
-        }
+        "Шут": "🎭 Новое начало! Пора сделать первый шаг.",
+        "Маг": "🪄 У тебя есть все ресурсы!",
+        "Верховная Жрица": "🌙 Доверься интуиции.",
+        "Императрица": "👑 Время творить!",
+        "Император": "🏛️ Укрепляй границы.",
+        "Иерофант": "⛪ Обратись за советом.",
+        "Влюбленные": "💕 Важный выбор.",
+        "Колесница": "⚡ Управляй судьбой!",
+        "Сила": "🦁 Ты сильнее, чем кажешься.",
+        "Отшельник": "🏮 Время тишины.",
+        "Колесо Фортуны": "🎡 Перемены к лучшему.",
+        "Справедливость": "⚖️ Поступи справедливо.",
+        "Повешенный": "🪢 Новый взгляд.",
+        "Смерть": "♻️ Старое уходит.",
+        "Умеренность": "⚖️ Найди баланс.",
+        "Дьявол": "😈 Освободись.",
+        "Башня": "🏛️💥 Крах иллюзий.",
+        "Звезда": "⭐ Верь в лучшее!",
+        "Луна": "🌕 Доверяй интуиции.",
+        "Солнце": "☀️ Всё будет хорошо!",
+        "Суд": "🎺 Время подвести итоги.",
+        "Мир": "🌍 Ты достигла цели!"
     }
-    
     card_name = random.choice(list(taro_cards.keys()))
-    card = taro_cards[card_name]
-    
     await message.answer(
-        f"🎴 *Твоя карта дня — {card_name}* 🎴\n\n"
-        f"{card['img']} **Значение:** {card['meaning']}\n\n"
-        f"✨ **Послание:**\n{card['detail']}\n\n"
-        f"💫 **Совет:**\n{card['advice']}\n\n"
-        f"🌟 Пусть этот день принесёт тебе волшебство! 🌟",
+        f"🎴 *Карта дня: {card_name}* 🎴\n\n{card_name in taro_cards and taro_cards[card_name]}",
         parse_mode="Markdown",
         reply_markup=menu_keyboard
     )
@@ -1356,9 +1079,8 @@ async def taro_card_handler(message: types.Message, state: FSMContext):
 async def book_psychologist(message: types.Message, state: FSMContext):
     await message.answer(
         "🌸 *Запись на консультацию* 🌸\n\n"
-        "Оставь свой контакт (@username или номер телефона), и психолог Дарья свяжется с тобой.\n\n"
-        "✨ Всё конфиденциально.\n\n"
-        "Нажми /cancel, чтобы отменить запись.",
+        "Оставь контакт (@username или телефон), и психолог Дарья свяжется с тобой.\n\n"
+        "Или нажми /cancel.",
         reply_markup=ReplyKeyboardRemove(),
         parse_mode="Markdown"
     )
@@ -1368,23 +1090,16 @@ async def book_psychologist(message: types.Message, state: FSMContext):
 async def process_contact(message: types.Message, state: FSMContext):
     if message.text.startswith("/cancel"):
         await state.clear()
-        await message.answer("❌ Запись отменена.", reply_markup=menu_keyboard)
+        await message.answer("❌ Отменено.", reply_markup=menu_keyboard)
         await state.set_state(Dialogue.chatting)
         return
 
     contact = message.text.strip()
-    is_valid = False
-    if contact.startswith("@"):
-        is_valid = True
-    elif re.match(r'^[\+\d][\d\s\-\(\)]{5,20}$', contact):
-        is_valid = True
-    elif contact.replace(" ", "").replace("-", "").replace("(", "").replace(")", "").isdigit():
-        is_valid = True
+    is_valid = contact.startswith("@") or re.match(r'^[\+\d][\d\s\-\(\)]{5,20}$', contact)
     
     if not is_valid:
         await message.answer(
-            "⚠️ Я не распознал контакт. Пожалуйста, отправь @username или номер телефона.\n\n"
-            "Или нажми /cancel.",
+            "⚠️ Не распознал контакт. Отправь @username или номер телефона.\n\nИли /cancel",
             reply_markup=menu_keyboard
         )
         await state.set_state(Dialogue.chatting)
@@ -1403,9 +1118,7 @@ async def process_contact(message: types.Message, state: FSMContext):
         del user_problems[user_id]
     
     await message.answer(
-        f"✅ *Спасибо, {message.from_user.first_name or 'дорогой друг'}!* ✅\n\n"
-        f"Психолог {PSYCHOLOGIST_NAME} свяжется с тобой в ближайшее время.\n\n"
-        f"✨ Береги себя, и помни — ты не одна! 💕",
+        f"✅ Спасибо! Психолог {PSYCHOLOGIST_NAME} свяжется с тобой.\n\n✨ Береги себя! 💕",
         reply_markup=menu_keyboard,
         parse_mode="Markdown"
     )
@@ -1416,24 +1129,13 @@ async def process_contact(message: types.Message, state: FSMContext):
 async def show_premium_info(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     if is_premium(user_id):
-        await message.answer(
-            "💎 *Premium уже активна!* 💎\n\n"
-            "Спасибо за поддержку проекта! 🙏\n"
-            "📬 Каждое утро в 8:00 ты получаешь персональный прогноз!",
-            reply_markup=menu_keyboard,
-            parse_mode="Markdown"
-        )
+        await message.answer("💎 *Premium уже активна!*", reply_markup=menu_keyboard, parse_mode="Markdown")
     else:
         remaining = get_remaining_questions(user_id)
         await message.answer(
-            f"⭐ *Premium-подписка 99 Telegram Stars/мес* ⭐\n\n"
-            f"📊 *Твой лимит сегодня:* {remaining}/{FREE_QUESTIONS_PER_DAY}\n\n"
-            f"💎 *Что даёт Premium:*\n"
-            f"✅ Безлимитные вопросы\n"
-            f"✅ Расширенная совместимость\n"
-            f"✅ Полный PDF-отчёт\n"
-            f"✅ Ежедневный прогноз в 8:00\n\n"
-            f"✨ Нажми кнопку ниже, чтобы оформить подписку!",
+            f"⭐ *Premium 99 Stars/мес* ⭐\n\n📊 Лимит: {remaining}/{FREE_QUESTIONS_PER_DAY}\n\n"
+            f"💎 *Что даёт:*\n✅ Безлимитные вопросы\n✅ Расширенная совместимость\n✅ PDF-отчёт\n✅ Ежедневный прогноз в 8:00\n\n"
+            f"✨ Нажми кнопку ниже!",
             reply_markup=premium_keyboard,
             parse_mode="Markdown"
         )
@@ -1443,15 +1145,9 @@ async def show_premium_info(message: types.Message, state: FSMContext):
 async def what_is_premium(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
     await callback.message.answer(
-        "🔮 *Что даёт Premium-подписка?* 🔮\n\n"
-        "1️⃣ *Безлимитные консультации*\n"
-        "2️⃣ *Полный разбор совместимости*\n"
-        "3️⃣ *Расширенные прогнозы*\n"
-        "4️⃣ *PDF-отчёт* (15+ страниц)\n"
-        "5️⃣ *Ежедневный прогноз в 8:00*\n"
-        "6️⃣ *Приоритетная поддержка*\n\n"
-        "💎 *Стоимость:* 99 Stars/мес\n\n"
-        "✨ Нажми «Оформить подписку»!",
+        "🔮 *Premium 99 Stars* 🔮\n\n"
+        "1️⃣ Безлимитные вопросы\n2️⃣ Полный разбор совместимости\n3️⃣ PDF-отчёт\n4️⃣ Ежедневный прогноз в 8:00\n\n"
+        "💎 Нажми «Оформить подписку»!",
         parse_mode="Markdown"
     )
     await state.set_state(Dialogue.chatting)
@@ -1459,11 +1155,11 @@ async def what_is_premium(callback: types.CallbackQuery, state: FSMContext):
 @dp.callback_query(lambda c: c.data == "buy_subscription")
 async def buy_subscription(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
-    prices = [LabeledPrice(label="Premium-подписка на месяц", amount=SUBSCRIPTION_PRICE)]
+    prices = [LabeledPrice(label="Premium", amount=SUBSCRIPTION_PRICE)]
     await callback.message.answer_invoice(
         title="Premium-подписка",
-        description="Безлимитные консультации + PDF-отчёт + ежедневные прогнозы",
-        payload="premium_subscription_30d",
+        description="Безлимитные консультации + PDF-отчёт",
+        payload="premium_30d",
         provider_token="",
         currency="XTR",
         prices=prices,
@@ -1481,12 +1177,8 @@ async def process_successful_payment(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     activate_premium(user_id, 30)
     await message.answer(
-        "💎 *Поздравляем! Premium-подписка активирована!* 💎\n\n"
-        "✨ Теперь тебе доступны:\n"
-        "✅ Безлимитные вопросы\n"
-        "✅ Полный PDF-отчёт\n"
-        "✅ Ежедневный прогноз в 8:00\n\n"
-        "📄 Нажми «📄 Получить PDF-отчёт» чтобы скачать свой первый отчёт!",
+        "💎 *Premium активирована!* 💎\n\n"
+        "📄 Нажми «📄 Получить PDF-отчёт»!",
         reply_markup=menu_keyboard,
         parse_mode="Markdown"
     )
@@ -1498,69 +1190,19 @@ async def show_demo_report(message: types.Message, state: FSMContext):
     birth_date = get_user_birthdate(user_id)
     if not birth_date:
         await message.answer(
-            "📊 *Демо-отчёт*\n\n"
-            "🔮 Сначала укажи дату рождения через кнопку «🔮 Число судьбы».",
+            "📊 *Демо-отчёт*\n\n🔮 Сначала укажи дату рождения через «🔮 Число судьбы».",
             parse_mode="Markdown",
             reply_markup=menu_keyboard
         )
         await state.set_state(Dialogue.chatting)
         return
     
-    gender = get_user_gender(user_id)
-    name = get_user_name(user_id)
-    number, desc = calculate_fate_number(birth_date, gender)
-    day, month, _ = map(int, birth_date.split('.'))
-    sign = get_zodiac_sign(day, month)
-    
-    demo_text = f"""
-📄 *ПЕРСОНАЛЬНЫЙ ДЕМО-ОТЧЁТ ДЛЯ {name.upper()}* 📄
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-🔮 *ЧИСЛО СУДЬБЫ — {number}*
-
-{desc[:200]}...
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-⭐ *ГОРОСКОП ДЛЯ {sign}*
-
-Звёзды говорят, что сегодня отличный день!
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-💕 *СОВМЕСТИМОСТЬ (ПРИМЕР)*
-
-Совместимость с Весами: 86%
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-🎴 *РАСКЛАД ТАРО «ПУТЬ ГОДА»*
-
-1️⃣ *Маг* 🪄 — Ресурсы есть
-2️⃣ *Колесница* ⚡ — Действуй!
-3️⃣ *Звезда* ⭐ — Верь в лучшее
-4️⃣ *Солнце* ☀️ — Радость близко
-5️⃣ *Мир* 🌍 — Цель достигнута
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-✨ *В ПОЛНОМ ОТЧЁТЕ (PREMIUM):*
-
-📄 15+ страниц с прогнозами
-🔮 Разбор 5 сфер жизни
-💕 Анализ совместимости
-🎴 Расклад Таро (10 карт)
-✨ Аффирмации на месяц
-🌙 Лунный календарь
-📎 PDF-файл для печати
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-💎 *СТОИМОСТЬ: 99 Stars/мес*
-
-⭐ Нажми «⭐ Подписка Premium»!
-"""
-    await message.answer(demo_text, parse_mode="Markdown", reply_markup=menu_keyboard)
+    await message.answer(
+        "📄 *Демо-отчёт*\n\n✨ Полный PDF-отчёт (15+ страниц) доступен по подписке Premium!\n\n"
+        "⭐ Всего за 99 Stars/мес!",
+        parse_mode="Markdown",
+        reply_markup=menu_keyboard
+    )
     await state.set_state(Dialogue.chatting)
 
 @dp.message(F.text == "📄 Получить PDF-отчёт")
@@ -1569,9 +1211,7 @@ async def get_pdf_report(message: types.Message, state: FSMContext):
     
     if not is_premium(user_id):
         await message.answer(
-            "💎 *PDF-отчёт доступен только Premium-пользователям!* 💎\n\n"
-            "Оформи подписку за 99 Stars/мес.\n\n"
-            "👉 Нажми «⭐ Подписка Premium» в меню.",
+            "💎 *PDF-отчёт доступен только Premium!*\n\n👉 Нажми «⭐ Подписка Premium».",
             parse_mode="Markdown",
             reply_markup=menu_keyboard
         )
@@ -1581,8 +1221,7 @@ async def get_pdf_report(message: types.Message, state: FSMContext):
     birth_date = get_user_birthdate(user_id)
     if not birth_date:
         await message.answer(
-            "🔮 *Сначала укажи дату рождения!* 🔮\n\n"
-            "Нажми кнопку «🔮 Число судьбы» и введи дату.",
+            "🔮 *Сначала укажи дату рождения!* 🔮\n\nНажми «🔮 Число судьбы».",
             parse_mode="Markdown",
             reply_markup=menu_keyboard
         )
@@ -1590,8 +1229,7 @@ async def get_pdf_report(message: types.Message, state: FSMContext):
         return
     
     await message.answer(
-        "💕 *Хочешь добавить анализ совместимости с партнёром?* 💕\n\n"
-        "Это сделает отчёт ещё более полным!",
+        "💕 *Добавить анализ совместимости с партнёром?*",
         reply_markup=partner_keyboard
     )
     await state.set_state(Dialogue.waiting_for_partner_date)
@@ -1599,28 +1237,28 @@ async def get_pdf_report(message: types.Message, state: FSMContext):
 @dp.callback_query(lambda c: c.data == "pdf_without_partner")
 async def pdf_without_partner(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
-    waiting_msg = await callback.message.answer("📄 Генерирую отчёт... Подожди немного ✨")
+    waiting_msg = await callback.message.answer("📄 Генерирую отчёт... ✨")
     
     try:
         pdf = await generate_pdf_report(callback.from_user.id, None)
         await waiting_msg.delete()
         await callback.message.answer_document(
             document=BufferedInputFile(pdf.getvalue(), filename=f"otchet_{callback.from_user.id}.pdf"),
-            caption="✨ *Твой персональный отчёт готов!* ✨\n\nБлагодарим за доверие! 💕",
+            caption="✨ *Твой отчёт готов!* ✨\n\nБлагодарим за доверие! 💕",
             reply_markup=menu_keyboard
         )
     except Exception as e:
-        await waiting_msg.edit_text("❌ Ошибка при генерации отчёта. Попробуй ещё раз.")
+        await waiting_msg.edit_text("❌ Ошибка при генерации. Попробуй ещё раз.")
         print(f"Ошибка PDF: {e}")
     finally:
+        await state.clear()
         await state.set_state(Dialogue.chatting)
 
 @dp.callback_query(lambda c: c.data == "pdf_with_partner")
 async def pdf_with_partner(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
     await callback.message.answer(
-        "💕 *Введи дату рождения партнёра* 💕\n\n"
-        "В формате `ДД.ММ.ГГГГ`, например: 15.05.1990",
+        "💕 *Введи дату рождения партнёра* 💕\n\nВ формате `ДД.ММ.ГГГГ`",
         parse_mode="Markdown"
     )
     await state.set_state(Dialogue.waiting_for_partner_date)
@@ -1635,18 +1273,18 @@ async def process_partner_date(message: types.Message, state: FSMContext):
     partner_date = message.text
     user_id = message.from_user.id
     
-    waiting_msg = await message.answer("📄 Генерирую отчёт с анализом совместимости... Подожди немного ✨")
+    waiting_msg = await message.answer("📄 Генерирую отчёт с анализом совместимости... ✨")
     
     try:
         pdf = await generate_pdf_report(user_id, partner_date)
         await waiting_msg.delete()
         await message.answer_document(
             document=BufferedInputFile(pdf.getvalue(), filename=f"otchet_{user_id}.pdf"),
-            caption=f"✨ *Твой отчёт с анализом совместимости готов!* ✨\n\n📅 Дата партнёра: {partner_date}\n\nБлагодарим за доверие! 💕",
+            caption=f"✨ *Отчёт с совместимостью готов!* ✨\n\n📅 Дата партнёра: {partner_date}\n\nБлагодарим за доверие! 💕",
             reply_markup=menu_keyboard
         )
     except Exception as e:
-        await waiting_msg.edit_text("❌ Ошибка при генерации отчёта. Попробуй ещё раз.")
+        await waiting_msg.edit_text("❌ Ошибка при генерации. Попробуй ещё раз.")
         print(f"Ошибка PDF: {e}")
     finally:
         await state.clear()
@@ -1667,13 +1305,10 @@ async def chat_with_ai(message: types.Message, state: FSMContext):
     
     print(f"📨 Получено: {user_text}")
     
-    crisis = ["суицид", "самоубийств", "не хочу жить", "покончить с собой", "умру"]
+    crisis = ["суицид", "самоубийств", "не хочу жить", "покончить с собой"]
     if any(word in user_text.lower() for word in crisis):
         await message.answer(
-            "🕊️ *Мне очень жаль, что тебе так тяжело* 🕊️\n\n"
-            "📞 *Телефон доверия:* 8-800-2000-122\n"
-            "🚑 *МЧС России:* 112\n\n"
-            "Ты не один. Пожалуйста, позвони ❤️",
+            "🕊️ *Телефон доверия:* 8-800-2000-122\n\nТы не один. Пожалуйста, позвони ❤️",
             parse_mode="Markdown"
         )
         await state.set_state(Dialogue.chatting)
@@ -1682,9 +1317,7 @@ async def chat_with_ai(message: types.Message, state: FSMContext):
     remaining = get_remaining_questions(user_id)
     if remaining <= 0 and not is_premium(user_id):
         await message.answer(
-            f"📊 *Лимит бесплатных вопросов на сегодня исчерпан* ({FREE_QUESTIONS_PER_DAY}).\n\n"
-            f"⭐ Оформи Premium-подписку за 99 Stars/мес!\n\n"
-            f"👉 Нажми кнопку «⭐ Подписка Premium» в меню.",
+            f"📊 *Лимит исчерпан* ({FREE_QUESTIONS_PER_DAY}).\n\n⭐ Оформи Premium!",
             parse_mode="Markdown",
             reply_markup=menu_keyboard
         )
@@ -1699,7 +1332,7 @@ async def chat_with_ai(message: types.Message, state: FSMContext):
         history.append({"role": "user", "content": user_text})
         
         if not groq_client:
-            answer = "🌙 *ИИ-ассистент временно недоступен.* Используй кнопки меню. ✨"
+            answer = "🌙 ИИ-ассистент временно недоступен."
         else:
             response = await groq_client.chat.completions.create(
                 model="llama-3.3-70b-versatile",
@@ -1727,28 +1360,22 @@ async def chat_with_ai(message: types.Message, state: FSMContext):
             
             book_kb = InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text="📝 Да, хочу записаться!", callback_data="book")],
-                    [InlineKeyboardButton(text="❌ Пока не готова", callback_data="not_ready")]
+                    [InlineKeyboardButton(text="📝 Записаться", callback_data="book")],
+                    [InlineKeyboardButton(text="❌ Не сейчас", callback_data="not_ready")]
                 ]
             )
             await message.answer(
-                f"💕 *{PSYCHOLOGIST_NAME}* может помочь тебе разобраться в этом глубже.\n\n"
-                f"Хочешь обсудить это с живым психологом? Это конфиденциально.",
-                reply_markup=book_kb,
-                parse_mode="Markdown"
+                f"💕 Хочешь обсудить это с психологом {PSYCHOLOGIST_NAME}?",
+                reply_markup=book_kb
             )
         else:
             if not is_premium(user_id):
-                answer += f"\n\n📊 Осталось вопросов сегодня: {new_remaining}/{FREE_QUESTIONS_PER_DAY}"
+                answer += f"\n\n📊 Осталось вопросов: {new_remaining}/{FREE_QUESTIONS_PER_DAY}"
             await message.answer(answer)
         
     except Exception as e:
         print(f"❌ Ошибка ИИ: {e}")
-        await message.answer(
-            "🌙 *Извини, произошла ошибка.* Попробуй ещё раз или используй кнопки меню.",
-            reply_markup=menu_keyboard,
-            parse_mode="Markdown"
-        )
+        await message.answer("🌙 Ошибка. Попробуй ещё раз.")
     finally:
         await state.set_state(Dialogue.chatting)
 
@@ -1756,11 +1383,7 @@ async def chat_with_ai(message: types.Message, state: FSMContext):
 async def handle_book(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
     await callback.message.answer(
-        "🌸 *Оставь свой контакт* 🌸\n\n"
-        "Напиши свой Telegram @username или номер телефона.\n"
-        f"Психолог {PSYCHOLOGIST_NAME} свяжется с тобой.\n\n"
-        "✨ Всё конфиденциально.\n\n"
-        "Или нажми /cancel для отмены.",
+        "🌸 *Оставь контакт* 🌸\n\nНапиши @username или телефон.\n\nИли /cancel",
         parse_mode="Markdown",
         reply_markup=ReplyKeyboardRemove()
     )
@@ -1771,15 +1394,13 @@ async def handle_not_ready(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.clear()
     await callback.message.answer(
-        "🌿 *Хорошо, я понимаю.* Если захочешь поговорить — я всегда здесь.\n\n"
-        "Напиши /start, когда будешь готова 🌸",
-        parse_mode="Markdown",
+        "🌿 Хорошо. Напиши /start, когда будешь готова 🌸",
         reply_markup=menu_keyboard
     )
     await state.set_state(Dialogue.chatting)
 
 async def main():
-    print("✨ Бот с полным функционалом запущен! ✨")
+    print("✨ Бот запущен! ✨")
     asyncio.create_task(send_daily_premium_forecasts())
     await dp.start_polling(bot)
 
