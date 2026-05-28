@@ -313,7 +313,6 @@ def get_compatibility(date1: str, date2: str, premium: bool = False) -> dict:
         sign1 = get_zodiac_sign(day1, month1)
         sign2 = get_zodiac_sign(day2, month2)
 
-        # Стихии
         elements = {
             "Овен": "Огонь 🔥", "Лев": "Огонь 🔥", "Стрелец": "Огонь 🔥",
             "Телец": "Земля 🌍", "Дева": "Земля 🌍", "Козерог": "Земля 🌍",
@@ -323,7 +322,6 @@ def get_compatibility(date1: str, date2: str, premium: bool = False) -> dict:
         elem1 = elements.get(sign1, "")
         elem2 = elements.get(sign2, "")
 
-        # Определяем совместимость по стихиям
         if elem1 == elem2:
             compatibility = random.randint(85, 98)
             base_text = "🌟 *Идеальный союз!* Вы принадлежите к одной стихии. 💕\n\n💪 *Сильные стороны:*\n• Взаимное вдохновение\n• Глубокая связь\n• Общие ценности\n\n⚠️ *Точки роста:*\n• Может быть скучно\n• Нужно разнообразие\n\n💫 *Совет:* Добавьте новизну в отношения."
@@ -1183,7 +1181,7 @@ async def process_successful_payment(message: types.Message):
     )
 
 @dp.message(F.text == "📊 Демо-отчёт")
-async def show_demo_report(message: types.Message):
+async def show_demo_report(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     birth_date = get_user_birthdate(user_id)
     if not birth_date:
@@ -1194,6 +1192,7 @@ async def show_demo_report(message: types.Message):
             parse_mode="Markdown",
             reply_markup=menu_keyboard
         )
+        await state.set_state(Dialogue.chatting)
         return
     
     gender = get_user_gender(user_id)
