@@ -29,6 +29,8 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 import pytz
 
 load_dotenv()
@@ -373,6 +375,8 @@ def get_compatibility(date1: str, date2: str, premium: bool = False) -> dict:
         return {"percent": 0, "text": f"❌ Ошибка при расчёте: {e}"}
 
 async def generate_pdf_report(user_id: int, partner_date: str = None) -> io.BytesIO:
+    """Генерирует красивый PDF-отчёт с поддержкой русского языка"""
+    
     gender = get_user_gender(user_id)
     name = get_user_name(user_id)
     birth_date = get_user_birthdate(user_id)
@@ -380,36 +384,213 @@ async def generate_pdf_report(user_id: int, partner_date: str = None) -> io.Byte
         birth_date = "01.01.1990"
     
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=1.5*cm, bottomMargin=1.5*cm)
+    doc = SimpleDocTemplate(
+        buffer, 
+        pagesize=A4, 
+        topMargin=1.5*cm, 
+        bottomMargin=1.5*cm,
+        leftMargin=2*cm,
+        rightMargin=2*cm
+    )
     story = []
     
-    styles = getSampleStyleSheet()
-    title_style = ParagraphStyle('Title', parent=styles['Title'], fontSize=24, alignment=TA_CENTER, spaceAfter=20)
-    heading_style = ParagraphStyle('Heading', parent=styles['Heading1'], fontSize=18, textColor='#4A148C', spaceAfter=12)
-    normal_style = ParagraphStyle('Normal', parent=styles['Normal'], fontSize=11, leading=14, spaceAfter=6)
+    # Регистрируем русский шрифт
+    try:
+        pdfmetrics.registerFont(TTFont('Roboto', 'Roboto.ttf'))
+        pdfmetrics.registerFont(TTFont('Roboto-Bold', 'Roboto.ttf'))
+        font_name = 'Roboto'
+    except:
+        # Если шрифт не найден, используем стандартный
+        font_name = 'Helvetica'
     
-    story.append(Paragraph(f"<b>Персональный отчёт</b>", title_style))
+    # Создаём стили
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        'Title', parent=styles['Title'],
+        fontName=font_name, fontSize=24, alignment=TA_CENTER, spaceAfter=20,
+        textColor='#4A148C'
+    )
+    heading1_style = ParagraphStyle(
+        'Heading1', parent=styles['Heading1'],
+        fontName=font_name, fontSize=18, alignment=TA_LEFT, spaceAfter=12,
+        textColor='#6A1B9A'
+    )
+    heading2_style = ParagraphStyle(
+        'Heading2', parent=styles['Heading2'],
+        fontName=font_name, fontSize=14, alignment=TA_LEFT, spaceAfter=8,
+        textColor='#8E24AA'
+    )
+    normal_style = ParagraphStyle(
+        'Normal', parent=styles['Normal'],
+        fontName=font_name, fontSize=10, leading=14, spaceAfter=6
+    )
+    center_style = ParagraphStyle(
+        'Center', parent=styles['Normal'],
+        fontName=font_name, fontSize=10, alignment=TA_CENTER, spaceAfter=6
+    )
+    
+    # ---- ТИТУЛЬНАЯ СТРАНИЦА ----
+    story.append(Paragraph("✨ ПЕРСОНАЛЬНЫЙ НУМЕРОЛОГИЧЕСКИЙ ОТЧЁТ ✨", title_style))
     story.append(Spacer(1, 0.5*cm))
-    story.append(Paragraph(f"<font size=16>для {name}</font>", title_style))
+    story.append(Paragraph(f"<font size=16>для {name.upper()}</font>", title_style))
     story.append(Spacer(1, 1*cm))
-    story.append(Paragraph(f"📅 Дата рождения: {birth_date}", normal_style))
-    story.append(Paragraph(f"📆 Дата составления: {datetime.now().strftime('%d.%m.%Y')}", normal_style))
+    story.append(Paragraph(f"📅 <b>Дата рождения:</b> {birth_date}", normal_style))
+    story.append(Paragraph(f"👤 <b>Пол:</b> {'Женский' if gender == 'female' else 'Мужской'}", normal_style))
+    story.append(Paragraph(f"📆 <b>Дата составления:</b> {datetime.now().strftime('%d.%m.%Y')}", normal_style))
+    story.append(Spacer(1, 1*cm))
+    story.append(Paragraph("✨ Открывая себя — открываешь мир ✨", center_style))
     story.append(PageBreak())
     
+    # ---- 1. ЧИСЛО СУДЬБЫ ----
     fate_number, fate_desc = calculate_fate_number(birth_date, gender)
-    story.append(Paragraph(f"🔮 Число судьбы — {fate_number}", heading_style))
-    story.append(Paragraph(fate_desc.replace("*", ""), normal_style))
+    story.append(Paragraph(f"🔮 1. ЧИСЛО СУДЬБЫ — {fate_number}", heading1_style))
+    story.append(Paragraph(fate_desc, normal_style))
     story.append(Spacer(1, 0.5*cm))
     
+    # ---- 2. РАСШИФРОВКА ПО ЦИФРАМ ДНЯ РОЖДЕНИЯ ----
+    day, month, year = map(int, birth_date.split('.'))
+    story.append(Paragraph("🔢 2. ГЛУБИННАЯ РАСШИФРОВКА", heading1_style))
+    
+    day_desc = {
+        1: "Лидерство, независимость, новаторство. Вы любите начинать новое.",
+        2: "Дипломатичность, сотрудничество, гармония. Вы — командный игрок.",
+        3: "Творчество, коммуникация, оптимизм. Ваша стихия — самовыражение.",
+        4: "Стабильность, порядок, трудолюбие. Вы — надёжная опора.",
+        5: "Свобода, перемены, приключения. Рутина — ваш враг.",
+        6: "Забота, ответственность, семья. Дом и близкие — ваше всё.",
+        7: "Анализ, мудрость, духовность. Вы — исследователь глубин.",
+        8: "Успех, власть, материализация. Вы созданы для больших свершений.",
+        9: "Гуманизм, завершение, прощение. Ваша миссия — помогать."
+    }
+    month_desc = {
+        1: "Январь — начало цикла. Вы любите планировать и начинать новое.",
+        2: "Февраль — время терпения. Вы умеете ждать и договариваться.",
+        3: "Март — энергия роста. Вы активны и любознательны.",
+        4: "Апрель — стабильность. Вы цените порядок и структуру.",
+        5: "Май — свобода. Вы стремитесь к независимости.",
+        6: "Июнь — гармония. Вы создаёте уют вокруг себя.",
+        7: "Июль — мудрость. Вы любите анализировать и размышлять.",
+        8: "Август — сила. Вы амбициозны и целеустремлённы.",
+        9: "Сентябрь — завершение. Вы умеете прощать и отпускать.",
+        10: "Октябрь — трансформация. Вы легко адаптируетесь к переменам.",
+        11: "Ноябрь — духовность. Вы ищете глубинный смысл.",
+        12: "Декабрь — итоги. Вы подводите черту и готовитесь к новому."
+    }
+    year_total = sum(int(d) for d in str(year))
+    while year_total > 9:
+        year_total = sum(int(d) for d in str(year_total))
+    year_desc = {
+        1: "Год начинаний — время ставить цели и действовать.",
+        2: "Год сотрудничества — время искать союзников и договариваться.",
+        3: "Год творчества — время самовыражения и радости.",
+        4: "Год труда — время строить основы и работать над планами.",
+        5: "Год перемен — время путешествий и новых впечатлений.",
+        6: "Год семьи — время заботы о близких и укрепления связей.",
+        7: "Год мудрости — время учиться, анализировать и расти духовно.",
+        8: "Год силы — время карьерных достижений и материального роста.",
+        9: "Год завершения — время подводить итоги и освобождать место новому."
+    }
+    
+    story.append(Paragraph(f"📌 <b>День рождения ({day}):</b> {day_desc.get(day, 'Уникальная личность.')}", normal_style))
+    story.append(Paragraph(f"📌 <b>Месяц рождения ({month}):</b> {month_desc.get(month, 'Ваш месяц несёт особую энергию.')}", normal_style))
+    story.append(Paragraph(f"📌 <b>Год рождения ({year} → {year_total}):</b> {year_desc.get(year_total, 'Ваш год рождения определяет жизненный путь.')}", normal_style))
+    story.append(Spacer(1, 0.5*cm))
+    
+    # ---- 3. ПРОГНОЗ НА 2026 ГОД ----
+    story.append(Paragraph("⭐ 3. ПРОГНОЗ НА 2026 ГОД", heading1_style))
+    year_2026 = 2026
+    total_2026 = day + month + year_2026
+    while total_2026 > 9:
+        total_2026 = sum(int(d) for d in str(total_2026))
+    forecasts_2026 = {
+        1: "🔥 ГОД ЛИДЕРСТВА — 2026 принесёт новые начинания и возможности проявить себя. Берите инициативу в свои руки!",
+        2: "🤝 ГОД СОТРУДНИЧЕСТВА — удачные партнёрства и гармония в отношениях. Работа в команде принесёт плоды.",
+        3: "🎨 ГОД ТВОРЧЕСТВА — время самовыражения и вдохновения. Займитесь тем, что приносит радость.",
+        4: "🏗️ ГОД СТРОИТЕЛЬСТВА — закладывайте фундамент для будущего. Упорный труд будет вознаграждён.",
+        5: "✈️ ГОД ПЕРЕМЕН — путешествия, новые впечатления и неожиданные повороты судьбы.",
+        6: "🏡 ГОД СЕМЬИ — время укрепить связи с близкими. Забота о доме принесёт счастье.",
+        7: "📚 ГОД МУДРОСТИ — обучение, самоанализ и духовный рост. Ищите ответы внутри себя.",
+        8: "💼 ГОД СИЛЫ — карьерный рост, финансовый успех и признание заслуг.",
+        9: "🌅 ГОД ЗАВЕРШЕНИЯ — отпустите прошлое, подведите итоги и подготовьтесь к новому циклу."
+    }
+    story.append(Paragraph(f"✨ <b>Число 2026 года для вас: {total_2026}</b>", heading2_style))
+    story.append(Paragraph(forecasts_2026.get(total_2026, "Год перемен и новых возможностей."), normal_style))
+    story.append(Spacer(1, 0.5*cm))
+    
+    # ---- 4. ПОМЕСЯЧНЫЙ ПРОГНОЗ ----
+    story.append(Paragraph("📅 4. ПОМЕСЯЧНЫЙ ПРОГНОЗ НА 2026 ГОД", heading1_style))
+    monthly = [
+        ("Январь", 1, "🌟 Месяц новых начинаний. Ставьте цели и действуйте смело!"),
+        ("Февраль", 2, "💕 Месяц любви и гармонии. Укрепляйте отношения с близкими."),
+        ("Март", 3, "🎨 Месяц творчества. Займитесь тем, что приносит радость."),
+        ("Апрель", 4, "🏗️ Месяц труда. Работайте над долгосрочными проектами."),
+        ("Май", 5, "✈️ Месяц перемен. Путешествия и новые впечатления."),
+        ("Июнь", 6, "🏡 Месяц семьи. Время заботы о доме и близких."),
+        ("Июль", 7, "📚 Месяц мудрости. Учитесь и анализируйте."),
+        ("Август", 8, "💼 Месяц силы. Карьерные успехи и финансовая удача."),
+        ("Сентябрь", 9, "🌅 Месяц завершения. Подводите итоги."),
+        ("Октябрь", 1, "🌟 Новый цикл. Новые возможности."),
+        ("Ноябрь", 2, "🤝 Месяц партнёрства. Ищите союзников."),
+        ("Декабрь", 3, "🎄 Месяц радости. Наслаждайтесь праздниками и итогами года.")
+    ]
+    for month_name, month_num, month_text in monthly:
+        story.append(Paragraph(f"<b>{month_name}:</b> {month_text}", normal_style))
+        story.append(Spacer(1, 0.2*cm))
+    story.append(Spacer(1, 0.5*cm))
+    
+    # ---- 5. СОВМЕСТИМОСТЬ С ПАРТНЁРОМ (если указана) ----
     if partner_date:
         comp = get_compatibility(birth_date, partner_date, premium=True)
-        story.append(Paragraph(f"💕 Совместимость с партнёром", heading_style))
-        story.append(Paragraph(f"📅 {birth_date} → {comp['sign1']}", normal_style))
-        story.append(Paragraph(f"📅 {partner_date} → {comp['sign2']}", normal_style))
-        story.append(Paragraph(f"🌟 Совместимость: {comp['percent']}%", normal_style))
-        story.append(Paragraph(comp['text'].replace("*", ""), normal_style))
+        story.append(Paragraph("💕 5. АНАЛИЗ СОВМЕСТИМОСТИ", heading1_style))
+        story.append(Paragraph(f"📅 <b>Ваша дата:</b> {birth_date} → {comp['sign1']}", normal_style))
+        story.append(Paragraph(f"📅 <b>Дата партнёра:</b> {partner_date} → {comp['sign2']}", normal_style))
+        story.append(Spacer(1, 0.3*cm))
+        story.append(Paragraph(f"🌟 <b>Совместимость: {comp['percent']}%</b>", heading2_style))
+        clean_text = comp['text'].replace("*", "").replace("_", "")
+        story.append(Paragraph(clean_text, normal_style))
+        story.append(Spacer(1, 0.5*cm))
+    else:
+        story.append(Paragraph("💕 5. СОВМЕСТИМОСТЬ", heading1_style))
+        story.append(Paragraph("🔓 Полный анализ совместимости доступен по подписке Premium. Укажите дату рождения партнёра при заказе отчёта.", normal_style))
+        story.append(Spacer(1, 0.5*cm))
     
-    story.append(Paragraph("🌿 Благодарим за доверие! Берегите себя и будьте счастливы 💕", normal_style))
+    # ---- 6. АФФИРМАЦИИ НА МЕСЯЦ ----
+    story.append(Paragraph("✨ 6. ЕЖЕДНЕВНЫЕ АФФИРМАЦИИ", heading1_style))
+    affirmations = [
+        "Я открыта новым возможностям. Вселенная заботится обо мне.",
+        "Мои таланты признаны и ценны.",
+        "Я привлекаю успех и изобилие.",
+        "Моя интуиция ведёт меня правильным путём.",
+        "Я люблю и принимаю себя целиком.",
+        "Каждый день я становлюсь сильнее.",
+        "Я достойна всего самого лучшего.",
+        "Мои мечты сбываются в нужное время.",
+        "Я благодарна за всё, что имею.",
+        "Я выбираю радость каждый день."
+    ]
+    for i, aff in enumerate(affirmations[:datetime.now().day], 1):
+        story.append(Paragraph(f"<b>{i} {datetime.now().strftime('%d.%m')}:</b> «{aff}»", normal_style))
+        story.append(Spacer(1, 0.2*cm))
+    story.append(Spacer(1, 0.5*cm))
+    
+    # ---- 7. ЛУННЫЙ КАЛЕНДАРЬ ----
+    story.append(Paragraph("🌙 7. ЛУННЫЙ КАЛЕНДАРЬ", heading1_style))
+    story.append(Paragraph("🌑 <b>Новолуние</b> — время начинать новое, загадывать желания, ставить цели.", normal_style))
+    story.append(Paragraph("🌓 <b>Первая четверть</b> — время действовать, принимать решения, двигаться к цели.", normal_style))
+    story.append(Paragraph("🌕 <b>Полнолуние</b> — время подводить итоги, отпускать лишнее, праздновать.", normal_style))
+    story.append(Paragraph("🌗 <b>Последняя четверть</b> — время завершать дела, избавляться от ненужного.", normal_style))
+    story.append(Spacer(1, 0.5*cm))
+    
+    # ---- 8. ЗАКЛЮЧЕНИЕ ----
+    story.append(Paragraph("💫 8. ПЕРСОНАЛЬНЫЕ РЕКОМЕНДАЦИИ", heading1_style))
+    story.append(Paragraph("✨ Доверяйте своей интуиции — она редко ошибается.", normal_style))
+    story.append(Paragraph("✨ Уделяйте время отдыху и восстановлению. Ваша энергия — главный ресурс.", normal_style))
+    story.append(Paragraph("✨ Не бойтесь просить о помощи, когда она нужна. Вы не одиноки.", normal_style))
+    story.append(Paragraph("✨ Благодарите себя и других каждый день. Благодарность привлекает чудеса.", normal_style))
+    story.append(Paragraph("✨ Помните: ваша жизнь — в ваших руках. Меняйте мысли — меняется реальность.", normal_style))
+    story.append(Spacer(1, 0.5*cm))
+    
+    story.append(Paragraph("🌿 <b>Благодарим за доверие! Берегите себя и будьте счастливы.</b> 💕", center_style))
     
     doc.build(story)
     buffer.seek(0)
