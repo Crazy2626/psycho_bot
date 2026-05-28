@@ -29,6 +29,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
+import pytz
 
 # ========== ЗАГРУЗКА ПЕРЕМЕННЫХ ==========
 load_dotenv()
@@ -249,7 +250,7 @@ def activate_premium(user_id: int, duration_days: int = 30):
                        (until.isoformat(), user_id))
 
 def was_forecast_sent_today(user_id: int) -> bool:
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = datetime.now(pytz.timezone('Europe/Moscow')).strftime("%Y-%m-%d")
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT last_sent_date FROM daily_forecast_sent WHERE user_id = ?", (user_id,))
@@ -257,7 +258,7 @@ def was_forecast_sent_today(user_id: int) -> bool:
         return row and row[0] == today_str
 
 def mark_forecast_sent(user_id: int):
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = datetime.now(pytz.timezone('Europe/Moscow')).strftime("%Y-%m-%d")
     with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute("INSERT OR REPLACE INTO daily_forecast_sent (user_id, last_sent_date) VALUES (?, ?)",
@@ -393,8 +394,9 @@ async def generate_daily_forecast(user_id: int) -> str:
     name = get_user_name(user_id)
     birth_date = get_user_birthdate(user_id)
     
-    today = datetime.now()
-    day_number = today.day + today.month
+    # Московское время для числа дня
+    moscow_now = datetime.now(pytz.timezone('Europe/Moscow'))
+    day_number = moscow_now.day + moscow_now.month
     while day_number > 9:
         day_number = sum(int(d) for d in str(day_number))
     
@@ -475,27 +477,28 @@ async def generate_daily_forecast(user_id: int) -> str:
 """
     return text
 
-# ========== ФОНОВАЯ ЗАДАЧА ДЛЯ ОТПРАВКИ В 8:00 ==========
+# ========== ФОНОВАЯ ЗАДАЧА ДЛЯ ОТПРАВКИ В 8:00 ПО МОСКВЕ ==========
 async def send_daily_premium_forecasts():
-    """Каждый день в 8:00 отправляет прогнозы всем Premium-пользователям"""
+    """Каждый день в 8:00 по московскому времени отправляет прогнозы всем Premium-пользователям"""
+    moscow_tz = pytz.timezone('Europe/Moscow')
+    
     while True:
-        now = datetime.now()
-        # Проверяем, что сейчас 8:00 утра
+        now = datetime.now(moscow_tz)
+        # Проверяем, что сейчас 8:00 утра по Москве
         if now.hour == 8 and now.minute == 0:
             users = get_all_premium_users()
+            print(f"📬 Отправка утренних отчётов в {now.strftime('%H:%M')} MSK для {len(users)} пользователей")
             for user_id in users:
-                # Проверяем, не отправляли ли уже сегодня
                 if not was_forecast_sent_today(user_id):
                     try:
                         forecast = await generate_daily_forecast(user_id)
                         await bot.send_message(user_id, forecast, parse_mode="Markdown")
                         mark_forecast_sent(user_id)
                         print(f"📬 Утренний отчёт отправлен {user_id}")
-                        # Небольшая задержка, чтобы не перегружать API
                         await asyncio.sleep(1)
                     except Exception as e:
                         print(f"❌ Ошибка отправки {user_id}: {e}")
-            # Ждём до следующего часа, чтобы не отправлять повторно в этом часе
+            # Ждём до следующего часа, чтобы не отправлять повторно
             await asyncio.sleep(60)
         await asyncio.sleep(30)
 
@@ -539,7 +542,7 @@ def save_to_google_sheets(user_id: int, username: str, problem: str, direction: 
     try:
         if not GOOGLE_CREDENTIALS_JSON or not SHEET_ID:
             return False
-        moscow_time = datetime.now() + timedelta(hours=3)
+        moscow_time = datetime.now(pytz.timezone('Europe/Moscow'))
         creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
         creds = Credentials.from_service_account_info(creds_dict, scopes=["https://www.googleapis.com/auth/spreadsheets"])
         client = gspread.authorize(creds)
@@ -934,8 +937,7 @@ async def handle_not_ready(callback: types.CallbackQuery, state: FSMContext):
 
 # ========== ЗАПУСК ==========
 async def main():
-    print("✨ Бот с ежедневными уведомлениями для Premium в 8:00 запущен! ✨")
-    # Запускаем фоновую задачу для отправки утренних отчётов
+    print("✨ Бот с ежедневными уведомлениями для Premium в 8:00 по Москве запущен! ✨")
     asyncio.create_task(send_daily_premium_forecasts())
     await dp.start_polling(bot)
 
