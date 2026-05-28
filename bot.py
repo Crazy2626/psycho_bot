@@ -304,10 +304,11 @@ def calculate_fate_number(birth_date: str, gender: str = "female") -> tuple:
         return (total, descriptions.get(total, "✨ Уникальная личность с особенным путём!"))
     except:
         return (0, "❌ Ошибка формата даты. Пожалуйста, используй ДД.ММ.ГГГГ")
+
 def get_compatibility(date1: str, date2: str, premium: bool = False) -> dict:
     try:
-        day1, month1, year1 = map(int, date1.split('.'))
-        day2, month2, year2 = map(int, date2.split('.'))
+        day1, month1, _ = map(int, date1.split('.'))
+        day2, month2, _ = map(int, date2.split('.'))
 
         sign1 = get_zodiac_sign(day1, month1)
         sign2 = get_zodiac_sign(day2, month2)
@@ -593,7 +594,7 @@ def save_to_google_sheets(user_id: int, username: str, problem: str, direction: 
         print(f"❌ Ошибка: {e}")
         return False
 
-# ---------------------- ОСНОВНЫЕ ОБРАБОТЧИКИ ----------------------
+# ---------------------- ОБРАБОТЧИКИ ----------------------
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
@@ -1049,7 +1050,7 @@ async def book_psychologist(message: types.Message, state: FSMContext):
         "🌸 *Запись на консультацию* 🌸\n\n"
         "Оставь свой контакт (@username или номер телефона), и психолог Дарья свяжется с тобой.\n\n"
         "✨ Всё конфиденциально, ты в безопасности.\n\n"
-        "Или нажми /cancel для отмены.",
+        "Нажми /cancel, чтобы отменить запись.",
         reply_markup=ReplyKeyboardRemove(),
         parse_mode="Markdown"
     )
@@ -1057,7 +1058,29 @@ async def book_psychologist(message: types.Message, state: FSMContext):
 
 @dp.message(StateFilter(Dialogue.waiting_for_contact))
 async def process_contact(message: types.Message, state: FSMContext):
-    contact = message.text
+    if message.text.startswith("/cancel"):
+        await state.clear()
+        await message.answer("❌ Запись отменена.", reply_markup=menu_keyboard)
+        await state.set_state(Dialogue.chatting)
+        return
+
+    contact = message.text.strip()
+    is_valid = False
+    if contact.startswith("@"):
+        is_valid = True
+    elif re.match(r'^[\+\d][\d\s\-\(\)]{5,20}$', contact):
+        is_valid = True
+    elif contact.replace(" ", "").replace("-", "").replace("(", "").replace(")", "").isdigit():
+        is_valid = True
+    
+    if not is_valid:
+        await message.answer(
+            "⚠️ Я не распознал контакт. Пожалуйста, отправь свой Telegram @username или номер телефона.\n\n"
+            "Или нажми /cancel, чтобы отменить запись.",
+            reply_markup=menu_keyboard
+        )
+        return
+
     user_id = message.from_user.id
     username = message.from_user.username or "None"
     problem_info = user_problems.get(user_id, {"problem": "Диалог с ИИ", "direction": "не определено"})
@@ -1263,6 +1286,7 @@ async def show_demo_report(message: types.Message):
 ✨ С любовью, твоя Дарья ✨
 """
     await message.answer(demo_text, parse_mode="Markdown", reply_markup=menu_keyboard)
+    await state.set_state(Dialogue.chatting)
 
 @dp.message(F.text == "📄 Получить PDF-отчёт")
 async def get_pdf_report(message: types.Message):
